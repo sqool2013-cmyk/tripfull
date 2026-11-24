@@ -1,0 +1,2167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tripfull · 올인원 여행 플래너</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+        };
+    </script>
+    <style>
+        @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+        body {
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* 다크 모드 전역 자동 대응 스타일 */
+        html.dark body {
+            background-color: #0f172a;
+            color: #f1f5f9;
+        }
+        html.dark .bg-white {
+            background-color: #1e293b !important;
+        }
+        html.dark .bg-slate-50 {
+            background-color: #0f172a !important;
+        }
+        html.dark .bg-slate-100 {
+            background-color: #334155 !important;
+        }
+        html.dark .border-slate-200,
+        html.dark .border-slate-100,
+        html.dark .border {
+            border-color: #334155 !important;
+        }
+        html.dark .divide-slate-200 > :not([hidden]) ~ :not([hidden]),
+        html.dark .divide-y > :not([hidden]) ~ :not([hidden]) {
+            border-color: #334155 !important;
+        }
+        html.dark .text-slate-900,
+        html.dark .text-slate-800 {
+            color: #f8fafc !important;
+        }
+        html.dark .text-slate-700,
+        html.dark .text-slate-600 {
+            color: #cbd5e1 !important;
+        }
+        html.dark .text-slate-500,
+        html.dark .text-slate-400 {
+            color: #94a3b8 !important;
+        }
+        html.dark .bg-emerald-50,
+        html.dark .bg-emerald-50\/70 {
+            background-color: rgba(16, 185, 129, 0.15) !important;
+        }
+        html.dark .border-emerald-200 {
+            border-color: rgba(16, 185, 129, 0.35) !important;
+        }
+        html.dark .bg-indigo-50 {
+            background-color: rgba(99, 102, 241, 0.18) !important;
+        }
+        html.dark .text-indigo-900,
+        html.dark .text-teal-900 {
+            color: #5eead4 !important;
+        }
+        html.dark input,
+        html.dark select {
+            color: #f8fafc;
+        }
+    </style>
+
+    <!-- React 18 & Babel Standalone -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Firebase SDK (Compat v10.8.0) -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+
+    <!-- Tripfull v0.2.0 분리 모듈 (캐시 무효화 쿼리 적용) -->
+    <script src="./utils.js?v=0.2.0"></script>
+    <script src="./budget-engine.js?v=0.2.0"></script>
+    <script src="./firebase-api.js?v=0.2.0"></script>
+    <script type="text/babel" src="./modals.jsx?v=0.2.0"></script>
+</head>
+<body class="bg-[#F4F7F9] dark:bg-slate-950 text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200 selection:bg-teal-500 selection:text-white">
+    <div id="root">
+        <div class="min-h-screen flex items-center justify-center p-6 text-center">
+            <div class="space-y-2">
+                <div class="text-2xl animate-pulse">✈️</div>
+                <div class="text-sm font-extrabold text-slate-600">Tripfull 불러오는 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useCallback } = React;
+
+        const APP_VERSION = 'v.0.2.0';
+        const U = window.TripfullUtils;
+        const B = window.TripfullBudget;
+        const API = window.TripfullAPI;
+
+        // RTDB 배열/객체 호환 정규화 헬퍼
+        const toArray = (raw) => {
+            if (!raw) return [];
+            if (Array.isArray(raw)) return raw.filter(Boolean);
+            if (typeof raw === 'object') return Object.values(raw).filter(Boolean);
+            return [];
+        };
+
+        // ====================================================================
+        // 런타임 에러 바운더리 (하얀 화면 원천 방지)
+        // ====================================================================
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, errorMsg: '' };
+            }
+            static getDerivedStateFromError(error) {
+                return { hasError: true, errorMsg: error?.message || '알 수 없는 화면 오류' };
+            }
+            componentDidCatch(error, info) {
+                console.error('[Tripfull ErrorBoundary]', error, info);
+            }
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+                            <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full text-center shadow-lg space-y-3">
+                                <div className="text-3xl">🛠️</div>
+                                <h2 className="text-base font-extrabold text-slate-800">화면을 표시하는 중 문제가 발생했습니다</h2>
+                                <p className="text-xs text-slate-500 break-words">{this.state.errorMsg}</p>
+                                <button
+                                    onClick={() => window.location.reload()}
+                                    className="px-5 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold"
+                                >
+                                    새로고침하여 복구하기
+                                </button>
+                            </div>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
+        // ====================================================================
+        // 메인 애플리케이션
+        // ====================================================================
+        function App() {
+            const M = window.TripfullModals;
+
+            // presets.json 비동기 로드 상태
+            const [presetsVersion, setPresetsVersion] = useState(0);
+
+            // 계정 및 여행 데이터 상태
+            const [registeredProfiles, setRegisteredProfiles] = useState(() => API.getCachedProfiles());
+            const [isProfilesLoaded, setIsProfilesLoaded] = useState(false);
+            const [currentProfile, setCurrentProfile] = useState(() => API.getCachedUser());
+            const [allTripsMap, setAllTripsMap] = useState({});
+            const [currentTripId, setCurrentTripId] = useState(null);
+
+            // 네트워크·실시간 시각 상태
+            const [isDbConnected, setIsDbConnected] = useState(false);
+            const [isSyncing, setIsSyncing] = useState(false);
+            const [nowTick, setNowTick] = useState(Date.now());
+            const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+
+            // 네비게이션 및 알림 상태
+            const [activeTab, setActiveTab] = useState('itinerary');
+            const [selectedDay, setSelectedDay] = useState(1);
+            const [expenseDayFilter, setExpenseDayFilter] = useState('all');
+            const [toastMessage, setToastMessage] = useState(null);
+
+            // 모달 열림/닫힘 상태
+            const [confirmDialog, setConfirmDialog] = useState({
+                isOpen: false, title: '', message: '', confirmText: '삭제하기', tone: 'danger', onConfirm: null
+            });
+            const [securityCheckModal, setSecurityCheckModal] = useState({
+                isOpen: false, title: '', description: '', inputPin: '', onSuccess: null
+            });
+            const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+            const [isEditMyProfileOpen, setIsEditMyProfileOpen] = useState(false);
+            const [isUserManageModalOpen, setIsUserManageModalOpen] = useState(false);
+            const [isTripListModalOpen, setIsTripListModalOpen] = useState(false);
+            const [isNewTripModalOpen, setIsNewTripModalOpen] = useState(false);
+            const [isEditTripOpen, setIsEditTripOpen] = useState(false);
+            const [isPlaceModalOpen, setIsPlaceModalOpen] = useState(false);
+            const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+            const [isRateModalOpen, setIsRateModalOpen] = useState(false);
+            const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+            const [isJoinCodeModalOpen, setIsJoinCodeModalOpen] = useState(false);
+            const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+            const [isSettlementModalOpen, setIsSettlementModalOpen] = useState(false);
+
+            // 편집 폼 상태
+            const [editingCheckItem, setEditingCheckItem] = useState(null);
+            const [editingPlaceInfo, setEditingPlaceInfo] = useState(null);
+            const [editingExpenseId, setEditingExpenseId] = useState(null);
+            const [joinCodeDigits, setJoinCodeDigits] = useState('');
+            const [loginForm, setLoginForm] = useState({ name: '', pin: '', avatar: '' });
+            const [editMyProfileForm, setEditMyProfileForm] = useState({ name: '', pin: '', avatar: '✈️' });
+            const [newCheckItem, setNewCheckItem] = useState('');
+
+            const todayStr = U.getTodayIso();
+            const [newTripForm, setNewTripForm] = useState({
+                title: '', country: '대한민국', city: '서울', customDestination: '',
+                startDate: todayStr, endDate: todayStr, currency: 'KRW',
+                budgetKRW: 1000000, visibility: 'private', invitedUserKeys: []
+            });
+            const [editTripForm, setEditTripForm] = useState({
+                title: '', country: '대한민국', city: '서울', customDestination: '',
+                startDate: '', endDate: '', currency: 'KRW', budgetKRW: 0
+            });
+            const [newPlace, setNewPlace] = useState({
+                day: 1, time: '', endTime: '', place: '', address: '',
+                category: 'sightseeing', memo: '', cost: '', currency: 'KRW'
+            });
+            const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+            const [addressSearchResults, setAddressSearchResults] = useState([]);
+            const [newExpense, setNewExpense] = useState({
+                day: 1, title: '', amount: '', currency: 'KRW',
+                payerId: 'c1', splitWith: ['c1'], category: 'food', method: 'card'
+            });
+
+            // 현재 프리셋 참조
+            const presets = useMemo(() => U.getPresets(), [presetsVersion]);
+            const CATEGORY_META = presets.categoryMeta || {};
+            const CURRENCIES = presets.currencies || {};
+            const COUNTRY_PRESETS = presets.countryPresets || {};
+
+            const activeUserKey = useMemo(() => {
+                if (currentProfile && currentProfile.key) return U.sanitizeKey(currentProfile.key);
+                if (currentProfile && currentProfile.name) return U.sanitizeKey(currentProfile.name);
+                return 'guest_user';
+            }, [currentProfile]);
+
+            // 서버 DB 프로필의 isAdmin 속성만 신뢰 (로컬 스토리지 위변조 방어)
+            const isAdmin = useMemo(() => {
+                if (!currentProfile || !isProfilesLoaded) return false;
+                const serverProf = registeredProfiles[activeUserKey];
+                return Boolean(serverProf && serverProf.isAdmin === true);
+            }, [currentProfile, registeredProfiles, activeUserKey, isProfilesLoaded]);
+
+            const isDarkMode = Boolean(currentProfile?.theme === 'dark');
+
+            // 토스트 알림 헬퍼
+            const showToast = useCallback((msg) => {
+                setToastMessage(msg);
+                setTimeout(() => setToastMessage(null), 3200);
+            }, []);
+
+            const askConfirm = ({ title, message, confirmText = '삭제하기', tone = 'danger', onConfirm }) => {
+                setConfirmDialog({ isOpen: true, title, message, confirmText, tone, onConfirm });
+            };
+
+            const requestSecurityVerification = (title, description, onSuccess) => {
+                setSecurityCheckModal({ isOpen: true, title, description, inputPin: '', onSuccess });
+            };
+
+            // ================================================================
+            // 1. 초기화: presets.json 로드, 다크모드, 시계, Firebase 구독
+            // ================================================================
+            useEffect(() => {
+                U.loadPresets('./presets.json?v=0.2.0').then(() => {
+                    setPresetsVersion(v => v + 1);
+                });
+            }, []);
+
+            useEffect(() => {
+                if (isDarkMode) document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            }, [isDarkMode]);
+
+            useEffect(() => {
+                const timer = setInterval(() => setNowTick(Date.now()), 30000);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                API.init();
+                const unsubProfiles = API.subscribeProfiles(
+                    (val) => {
+                        setIsDbConnected(true);
+                        setRegisteredProfiles(val);
+                        setIsProfilesLoaded(true);
+                    },
+                    () => setIsDbConnected(false)
+                );
+                const unsubTrips = API.subscribeTrips(
+                    (val) => {
+                        setIsDbConnected(true);
+                        setAllTripsMap(val);
+                    },
+                    () => setIsDbConnected(false)
+                );
+                return () => {
+                    unsubProfiles();
+                    unsubTrips();
+                };
+            }, []);
+
+            // 서버 프로필과 현재 세션의 무결성 검증 (계정 삭제 또는 비밀번호 authVersion 변경 시 자동 로그아웃)
+            useEffect(() => {
+                if (!currentProfile || !isProfilesLoaded) return;
+                const serverProf = registeredProfiles[activeUserKey];
+                if (!serverProf) {
+                    setCurrentProfile(null);
+                    API.clearCachedUser();
+                    showToast('⚠️ 계정이 존재하지 않거나 삭제되어 로그아웃되었습니다.');
+                    return;
+                }
+
+                // 비밀번호가 다른 기기/관리자에 의해 변경된 경우(authVersion 불일치) 세션 즉시 무효화
+                if (serverProf.authVersion && currentProfile.authVersion && serverProf.authVersion !== currentProfile.authVersion) {
+                    setCurrentProfile(null);
+                    API.clearCachedUser();
+                    showToast('🔐 비밀번호가 변경되어 다시 로그인이 필요합니다.');
+                    return;
+                }
+
+                const serverIds = JSON.stringify(serverProf.joinedTripIds || []);
+                const localIds = JSON.stringify(currentProfile.joinedTripIds || []);
+                const serverTheme = serverProf.theme || 'light';
+                const localTheme = currentProfile.theme || 'light';
+                const serverAdmin = Boolean(serverProf.isAdmin);
+                const localAdmin = Boolean(currentProfile.isAdmin);
+
+                if (
+                    serverIds !== localIds ||
+                    serverProf.name !== currentProfile.name ||
+                    serverProf.avatar !== currentProfile.avatar ||
+                    serverTheme !== localTheme ||
+                    serverAdmin !== localAdmin ||
+                    serverProf.authVersion !== currentProfile.authVersion
+                ) {
+                    const synced = {
+                        ...currentProfile,
+                        ...serverProf,
+                        key: activeUserKey,
+                        isAdmin: serverAdmin
+                    };
+                    delete synced.pin;
+                    delete synced.pinHash;
+                    setCurrentProfile(synced);
+                    API.saveCachedUser(synced);
+                }
+            }, [registeredProfiles, activeUserKey, isProfilesLoaded]);
+
+            // ================================================================
+            // 2. 여행 목록 필터링 및 현재 여행 파생 상태
+            // ================================================================
+            const visiblePrivateTrips = useMemo(() => {
+                const list = Object.values(allTripsMap).filter(t => t && t.visibility === 'private');
+                if (isAdmin) return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                return list
+                    .filter(t => U.sanitizeKey(t.ownerKey) === activeUserKey)
+                    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            }, [allTripsMap, isAdmin, activeUserKey]);
+
+            const visibleSharedTrips = useMemo(() => {
+                const list = Object.values(allTripsMap).filter(t => t && t.visibility !== 'private');
+                if (isAdmin) return list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                const joinedIds = toArray(currentProfile?.joinedTripIds);
+                return list
+                    .filter(t => {
+                        const isOwner = U.sanitizeKey(t.ownerKey) === activeUserKey;
+                        const isJoined = joinedIds.includes(t.id);
+                        const isCompanion = toArray(t.companions).some(c => U.sanitizeKey(c.userKey || c.name) === activeUserKey);
+                        return isOwner || isJoined || isCompanion;
+                    })
+                    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+            }, [allTripsMap, isAdmin, currentProfile, activeUserKey]);
+
+            const allVisibleTrips = useMemo(() => {
+                return [...visiblePrivateTrips, ...visibleSharedTrips];
+            }, [visiblePrivateTrips, visibleSharedTrips]);
+
+            useEffect(() => {
+                if (allVisibleTrips.length === 0) {
+                    setCurrentTripId(null);
+                    return;
+                }
+                if (!currentTripId || !allVisibleTrips.some(t => t.id === currentTripId)) {
+                    setCurrentTripId(allVisibleTrips[0].id);
+                }
+            }, [allVisibleTrips, currentTripId]);
+
+            const currentTrip = useMemo(() => {
+                if (!currentTripId) return allVisibleTrips[0] || null;
+                return allVisibleTrips.find(t => t.id === currentTripId) || allVisibleTrips[0] || null;
+            }, [allVisibleTrips, currentTripId]);
+
+            const isCurrentTripOwnerOrAdmin = useMemo(() => {
+                if (!currentTrip || !currentProfile) return false;
+                if (isAdmin) return true;
+                return U.sanitizeKey(currentTrip.ownerKey) === activeUserKey;
+            }, [currentTrip, currentProfile, isAdmin, activeUserKey]);
+
+            const tripDays = useMemo(() => U.getTripDayNumbers(currentTrip), [currentTrip]);
+            const itinerary = currentTrip?.itinerary || {};
+            const companions = useMemo(() => toArray(currentTrip?.companions), [currentTrip]);
+            const expenses = useMemo(() => toArray(currentTrip?.expenses), [currentTrip]);
+            const checklist = useMemo(() => toArray(currentTrip?.checklist), [currentTrip]);
+
+            const localTimeInfo = useMemo(() => U.getLocalTimeInfo(currentTrip, nowTick), [currentTrip, nowTick, presetsVersion]);
+            const budgetSummary = useMemo(() => B.calculateBudgetSummary(currentTrip), [currentTrip, presetsVersion]);
+
+            const filteredExpenses = useMemo(() => {
+                if (expenseDayFilter === 'all') return expenses;
+                return expenses.filter(e => Number(e.day) === Number(expenseDayFilter));
+            }, [expenses, expenseDayFilter]);
+
+            const filteredExpenseTotalKRW = useMemo(
+                () => B.getFilteredExpenseTotalKRW(currentTrip, filteredExpenses),
+                [currentTrip, filteredExpenses, presetsVersion]
+            );
+
+            // ================================================================
+            // 3. DB 저장 래퍼 함수
+            // ================================================================
+            const persistProfile = useCallback(async (uKey, profObj) => {
+                const cleanKey = U.sanitizeKey(uKey);
+                if (!cleanKey) return;
+                setRegisteredProfiles(prev => {
+                    const next = { ...prev, [cleanKey]: profObj };
+                    API.saveCachedProfiles(next);
+                    return next;
+                });
+                try {
+                    await API.saveProfile(cleanKey, profObj);
+                } catch (err) {
+                    console.error('프로필 저장 실패:', err);
+                }
+            }, []);
+
+            const persistTrip = useCallback((tripObj) => {
+                if (!tripObj || !tripObj.id) return;
+                setIsSyncing(true);
+                setAllTripsMap(prev => ({ ...prev, [tripObj.id]: tripObj }));
+                API.saveTrip(tripObj)
+                    .then(() => setIsSyncing(false))
+                    .catch(err => {
+                        console.error('여행 저장 실패:', err);
+                        setIsSyncing(false);
+                    });
+            }, []);
+
+            const updateCurrentTrip = useCallback((updater) => {
+                if (!currentTrip) return;
+                const updated = typeof updater === 'function' ? updater(currentTrip) : { ...currentTrip, ...updater };
+                persistTrip(updated);
+            }, [currentTrip, persistTrip]);
+
+            // ================================================================
+            // 4. 계정 인증 · 프로필 · 테마 핸들러 (무유출 보안 적용)
+            // ================================================================
+            const handleVerifySecurityPin = async (e) => {
+                e.preventDefault();
+                if (!currentProfile) return;
+                const serverProf = registeredProfiles[activeUserKey] || currentProfile;
+                const res = await API.verifyUserSecret(activeUserKey, securityCheckModal.inputPin, serverProf);
+                if (!res.ok) {
+                    showToast('❌ 비밀번호가 일치하지 않습니다.');
+                    return;
+                }
+                const cb = securityCheckModal.onSuccess;
+                setSecurityCheckModal({ isOpen: false, title: '', description: '', inputPin: '', onSuccess: null });
+                if (cb) cb();
+            };
+
+            const handleLoginSubmit = async (e) => {
+                e.preventDefault();
+                const name = loginForm.name.trim();
+                const pin = loginForm.pin.trim();
+                if (!name) return showToast('아이디(이름)를 입력해주세요.');
+                if (pin.length < 4) return showToast('비밀번호 4자리 이상을 입력해주세요.');
+                if (!isProfilesLoaded) return showToast('서버에서 계정 정보를 불러오는 중입니다. 잠시만 기다려주세요.');
+
+                setIsAuthSubmitting(true);
+                try {
+                    const cleanKey = U.sanitizeKey(name);
+                    const existing = registeredProfiles[cleanKey] ||
+                        Object.values(registeredProfiles).find(p => p && p.name === name);
+
+                    if (existing) {
+                        const targetKey = U.sanitizeKey(existing.key || existing.name);
+                        const verifyRes = await API.verifyUserSecret(targetKey, pin, existing);
+                        if (!verifyRes.ok) {
+                            showToast('❌ 비밀번호가 일치하지 않습니다.');
+                            return;
+                        }
+                        const baseProf = verifyRes.cleanedProfile || existing;
+                        const updated = {
+                            ...baseProf,
+                            key: targetKey,
+                            isAdmin: Boolean(existing.isAdmin),
+                            avatar: loginForm.avatar || existing.avatar || '✈️',
+                            theme: existing.theme || 'light',
+                            secretMode: 'zero-download',
+                            authVersion: verifyRes.authVersion || baseProf.authVersion || Date.now(),
+                            joinedTripIds: toArray(existing.joinedTripIds),
+                            lastLoginAt: Date.now()
+                        };
+                        delete updated.pin;
+                        delete updated.pinHash;
+
+                        await persistProfile(targetKey, updated);
+                        setCurrentProfile(updated);
+                        API.saveCachedUser(updated);
+                        setIsLoginModalOpen(false);
+                        setLoginForm({ name: '', pin: '', avatar: '' });
+                        showToast(
+                            verifyRes.migrated
+                                ? `🛡️ 무유출 보안 적용 완료! 반갑습니다, ${updated.avatar} ${updated.name}님!`
+                                : `👋 반갑습니다, ${updated.avatar} ${updated.name}님!`
+                        );
+                    } else {
+                        const isFirstAccountEver = Object.keys(registeredProfiles).length === 0;
+                        const newProf = await API.registerNewProfile({
+                            name,
+                            pin,
+                            avatar: loginForm.avatar || '✈️',
+                            isAdmin: isFirstAccountEver,
+                            theme: 'light'
+                        });
+                        setRegisteredProfiles(prev => {
+                            const next = { ...prev, [newProf.key]: newProf };
+                            API.saveCachedProfiles(next);
+                            return next;
+                        });
+                        setCurrentProfile(newProf);
+                        API.saveCachedUser(newProf);
+                        setIsLoginModalOpen(false);
+                        setLoginForm({ name: '', pin: '', avatar: '' });
+                        showToast(`🎉 '${name}' 계정이 안전하게 등록되었습니다!`);
+                    }
+                } catch (err) {
+                    console.error('로그인 처리 오류:', err);
+                    showToast('❌ 로그인 처리 중 오류가 발생했습니다.');
+                } finally {
+                    setIsAuthSubmitting(false);
+                }
+            };
+
+            const handleSaveMyProfile = async (e) => {
+                e.preventDefault();
+                if (!currentProfile) return;
+                const nextName = editMyProfileForm.name.trim();
+                const nextPin = editMyProfileForm.pin.trim();
+                const nextAvatar = editMyProfileForm.avatar || '✈️';
+
+                if (!nextName) return showToast('이름을 입력해주세요.');
+                if (nextPin && nextPin.length < 4) return showToast('새 비밀번호는 4자리 이상으로 입력해주세요.');
+
+                const oldKey = U.sanitizeKey(currentProfile.key || currentProfile.name);
+                const isDuplicateName = Object.entries(registeredProfiles).some(([uKey, prof]) => {
+                    if (U.sanitizeKey(uKey) === oldKey) return false;
+                    return prof && (
+                        prof.name.trim().toLowerCase() === nextName.toLowerCase() ||
+                        U.sanitizeKey(prof.name) === U.sanitizeKey(nextName)
+                    );
+                });
+                if (isDuplicateName) return showToast('❌ 이미 다른 사용자가 사용 중인 이름입니다.');
+
+                try {
+                    let updatedProf = {
+                        ...currentProfile,
+                        key: oldKey,
+                        name: nextName,
+                        avatar: nextAvatar,
+                        isAdmin: Boolean(registeredProfiles[oldKey]?.isAdmin)
+                    };
+                    if (nextPin) {
+                        updatedProf = await API.updateUserPassword(oldKey, nextPin, updatedProf);
+                    } else {
+                        await persistProfile(oldKey, updatedProf);
+                    }
+
+                    setCurrentProfile(updatedProf);
+                    API.saveCachedUser(updatedProf);
+
+                    // 참여 중인 모든 여행의 멤버 표시 정보 동기화
+                    Object.values(allTripsMap).forEach(t => {
+                        if (!t) return;
+                        let changed = false;
+                        const nextCompanions = toArray(t.companions).map(c => {
+                            if (U.sanitizeKey(c.userKey) === oldKey || c.name === currentProfile.name) {
+                                changed = true;
+                                return { ...c, name: nextName, avatar: nextAvatar, userKey: oldKey };
+                            }
+                            return c;
+                        });
+                        const nextOwnerName = U.sanitizeKey(t.ownerKey) === oldKey ? nextName : t.ownerName;
+                        if (changed || nextOwnerName !== t.ownerName) {
+                            persistTrip({ ...t, ownerName: nextOwnerName, companions: nextCompanions });
+                        }
+                    });
+
+                    setIsEditMyProfileOpen(false);
+                    showToast('✅ 내 프로필 정보가 수정되었습니다.');
+                } catch (err) {
+                    showToast('❌ 프로필 저장 중 오류가 발생했습니다.');
+                }
+            };
+
+            const handleToggleTheme = () => {
+                if (!currentProfile) return;
+                const nextTheme = isDarkMode ? 'light' : 'dark';
+                const cleanK = U.sanitizeKey(currentProfile.key || currentProfile.name);
+                const updated = { ...currentProfile, key: cleanK, theme: nextTheme };
+                setCurrentProfile(updated);
+                API.saveCachedUser(updated);
+                persistProfile(cleanK, updated);
+                showToast(nextTheme === 'dark' ? '🌙 다크 모드가 적용되었습니다.' : '☀️ 라이트 모드가 적용되었습니다.');
+            };
+
+            // ================================================================
+            // 5. 여행 CRUD & 초대코드 · 멤버 핸들러
+            // ================================================================
+            const handleSelectTrip = (id) => {
+                if (!allTripsMap[id]) return;
+                setCurrentTripId(id);
+                setSelectedDay(1);
+                setExpenseDayFilter('all');
+                setIsTripListModalOpen(false);
+            };
+
+            const handleCreateNewTrip = (e) => {
+                e.preventDefault();
+                if (!currentProfile) return;
+                const destinationStr = newTripForm.country === '직접 입력'
+                    ? newTripForm.customDestination.trim()
+                    : `${newTripForm.country} ${newTripForm.city === '직접 입력' ? newTripForm.customDestination.trim() : newTripForm.city}`.trim();
+
+                if (!newTripForm.title.trim() || !destinationStr) return showToast('여행 명칭과 국가/도시를 입력해주세요.');
+                if (newTripForm.endDate < newTripForm.startDate) return showToast('⚠️ 도착일이 출발일보다 빠를 수 없습니다.');
+
+                const sParts = newTripForm.startDate.split('-').map(Number);
+                const eParts = newTripForm.endDate.split('-').map(Number);
+                const diffDays = Math.max(1, Math.min(30, Math.round((new Date(eParts[0], eParts[1] - 1, eParts[2]) - new Date(sParts[0], sParts[1] - 1, sParts[2])) / 86400000) + 1));
+
+                const initialItinerary = {};
+                for (let d = 1; d <= diffDays; d++) initialItinerary[d] = [];
+
+                const curr = newTripForm.currency;
+                const shareCode = U.generateUniqueShareCode(allTripsMap);
+                const newTripId = 'trip_' + Date.now();
+                const countryMeta = COUNTRY_PRESETS[newTripForm.country] || COUNTRY_PRESETS['직접 입력'];
+
+                const baseCompanions = [
+                    { id: 'c1', name: currentProfile.name, userKey: activeUserKey, avatar: currentProfile.avatar || '✈️', color: 'bg-teal-500' }
+                ];
+                const colors = ['bg-indigo-500', 'bg-rose-500', 'bg-amber-500', 'bg-cyan-500', 'bg-purple-500'];
+
+                if (newTripForm.visibility === 'shared' && newTripForm.invitedUserKeys.length > 0) {
+                    newTripForm.invitedUserKeys.forEach((uKey, idx) => {
+                        const prof = registeredProfiles[uKey];
+                        if (prof && U.sanitizeKey(uKey) !== activeUserKey) {
+                            baseCompanions.push({
+                                id: 'c_inv_' + Date.now() + '_' + idx,
+                                name: prof.name,
+                                userKey: uKey,
+                                avatar: prof.avatar || '✈️',
+                                color: colors[idx % colors.length]
+                            });
+                            const joined = toArray(prof.joinedTripIds);
+                            if (!joined.includes(newTripId)) {
+                                persistProfile(uKey, { ...prof, joinedTripIds: [...joined, newTripId] });
+                            }
+                        }
+                    });
+                }
+
+                const defaultChecklist = (countryMeta?.presets || []).map((text, idx) => ({
+                    id: `chk_${Date.now()}_${idx}`, text, checkedBy: {}
+                }));
+
+                const createdTrip = {
+                    id: newTripId,
+                    shareCode,
+                    visibility: newTripForm.visibility,
+                    ownerKey: activeUserKey,
+                    ownerName: currentProfile.name,
+                    title: newTripForm.title.trim(),
+                    country: newTripForm.country,
+                    city: newTripForm.city,
+                    destination: destinationStr,
+                    startDate: newTripForm.startDate,
+                    endDate: newTripForm.endDate,
+                    currency: curr,
+                    exchangeRate: CURRENCIES[curr]?.defaultRate || 1,
+                    baseRates: { [curr]: CURRENCIES[curr]?.defaultRate || 1, USD: 1380, JPY: 905, EUR: 1490, KRW: 1 },
+                    dailyRates: {},
+                    budgetKRW: Number(newTripForm.budgetKRW) || 1000000,
+                    createdAt: Date.now(),
+                    companions: baseCompanions,
+                    itinerary: initialItinerary,
+                    expenses: [],
+                    settlements: [],
+                    checklist: defaultChecklist
+                };
+
+                if (newTripForm.visibility === 'shared') {
+                    const myJoined = toArray(currentProfile.joinedTripIds);
+                    const updatedMe = { ...currentProfile, joinedTripIds: [...new Set([...myJoined, newTripId])] };
+                    setCurrentProfile(updatedMe);
+                    API.saveCachedUser(updatedMe);
+                    persistProfile(activeUserKey, updatedMe);
+                }
+
+                persistTrip(createdTrip);
+                setCurrentTripId(createdTrip.id);
+                setSelectedDay(1);
+                setIsNewTripModalOpen(false);
+                showToast(`🎉 '${createdTrip.title}' 여행이 생성되었습니다!`);
+            };
+
+            const openEditTripModal = () => {
+                if (!currentTrip) return;
+                const matchedCountry = currentTrip.country && COUNTRY_PRESETS[currentTrip.country]
+                    ? currentTrip.country
+                    : '직접 입력';
+                setEditTripForm({
+                    title: currentTrip.title,
+                    country: matchedCountry,
+                    city: currentTrip.city || (COUNTRY_PRESETS[matchedCountry]?.cities?.[0] || '직접 입력'),
+                    customDestination: currentTrip.destination || '',
+                    startDate: currentTrip.startDate,
+                    endDate: currentTrip.endDate,
+                    currency: currentTrip.currency || 'KRW',
+                    budgetKRW: currentTrip.budgetKRW || 0
+                });
+                setIsEditTripOpen(true);
+            };
+
+            const handleSaveEditTrip = (e) => {
+                e.preventDefault();
+                if (!currentTrip || !editTripForm.title.trim()) return;
+                if (editTripForm.endDate < editTripForm.startDate) return showToast('⚠️ 도착일이 출발일보다 빠를 수 없습니다.');
+
+                const destinationStr = editTripForm.country === '직접 입력'
+                    ? editTripForm.customDestination.trim()
+                    : `${editTripForm.country} ${editTripForm.city === '직접 입력' ? editTripForm.customDestination.trim() : editTripForm.city}`.trim();
+
+                updateCurrentTrip(t => ({
+                    ...t,
+                    title: editTripForm.title.trim(),
+                    country: editTripForm.country,
+                    city: editTripForm.city,
+                    destination: destinationStr,
+                    startDate: editTripForm.startDate,
+                    endDate: editTripForm.endDate,
+                    currency: editTripForm.currency,
+                    budgetKRW: Number(editTripForm.budgetKRW) || 0
+                }));
+                setIsEditTripOpen(false);
+                showToast('✏️ 여행 정보가 수정되었습니다.');
+            };
+
+            const handleDeleteTrip = (tripObj, e) => {
+                if (e) e.stopPropagation();
+                if (!tripObj) return;
+                const isOwner = isAdmin || U.sanitizeKey(tripObj.ownerKey) === activeUserKey;
+
+                askConfirm({
+                    title: isOwner ? '여행 영구 삭제' : '공유 여행 나가기',
+                    message: isOwner
+                        ? `'${tripObj.title}' 여행을 삭제하시겠습니까? 모든 일정과 가계부 기록이 영구 삭제됩니다.`
+                        : `'${tripObj.title}' 공유 여행 목록에서 나가시겠습니까?`,
+                    confirmText: isOwner ? '영구 삭제' : '목록에서 나가기',
+                    onConfirm: () => {
+                        if (isOwner) {
+                            setAllTripsMap(prev => {
+                                const next = { ...prev };
+                                delete next[tripObj.id];
+                                return next;
+                            });
+                            API.deleteTrip(tripObj.id);
+                            showToast(`🗑️ '${tripObj.title}' 여행이 삭제되었습니다.`);
+                        } else {
+                            const nextJoined = toArray(currentProfile?.joinedTripIds).filter(id => id !== tripObj.id);
+                            const updatedProf = { ...currentProfile, joinedTripIds: nextJoined };
+                            setCurrentProfile(updatedProf);
+                            API.saveCachedUser(updatedProf);
+                            persistProfile(activeUserKey, updatedProf);
+                            const nextCompanions = toArray(tripObj.companions).filter(c => U.sanitizeKey(c.userKey || c.name) !== activeUserKey);
+                            persistTrip({ ...tripObj, companions: nextCompanions });
+                            showToast(`👋 '${tripObj.title}' 여행에서 나갔습니다.`);
+                        }
+                    }
+                });
+            };
+
+            const handleJoinByCode = (e) => {
+                e.preventDefault();
+                const digits = joinCodeDigits.trim();
+                if (digits.length < 4) return showToast('4자리 코드를 입력해주세요.');
+                const fullCode = `TRIP-${digits}`.toUpperCase();
+                const found = Object.values(allTripsMap).find(t => t && (t.shareCode || '').toUpperCase() === fullCode);
+                if (!found) return showToast('❌ 일치하는 초대 코드의 공유 여행을 찾을 수 없습니다.');
+
+                const currentJoined = toArray(currentProfile?.joinedTripIds);
+                const nextJoined = currentJoined.includes(found.id) ? currentJoined : [...currentJoined, found.id];
+                const updatedProfile = { ...currentProfile, joinedTripIds: nextJoined };
+                setCurrentProfile(updatedProfile);
+                API.saveCachedUser(updatedProfile);
+                persistProfile(activeUserKey, updatedProfile);
+
+                const alreadyMember = toArray(found.companions).some(c => U.sanitizeKey(c.userKey || c.name) === activeUserKey);
+                if (!alreadyMember && currentProfile) {
+                    persistTrip({
+                        ...found,
+                        companions: [...toArray(found.companions), {
+                            id: 'c_' + Date.now(),
+                            name: currentProfile.name,
+                            userKey: activeUserKey,
+                            avatar: currentProfile.avatar || '✈️',
+                            color: 'bg-indigo-500'
+                        }]
+                    });
+                }
+
+                setCurrentTripId(found.id);
+                setJoinCodeDigits('');
+                setIsJoinCodeModalOpen(false);
+                showToast(`🎉 '${found.title}' 공유 여행이 내 계정에 연동되었습니다!`);
+            };
+
+            const handleInviteRegisteredUser = (uKey) => {
+                if (!currentTrip || !isCurrentTripOwnerOrAdmin) return;
+                const prof = registeredProfiles[uKey];
+                if (!prof) return;
+
+                let nextTrip = { ...currentTrip };
+                if (nextTrip.visibility === 'private') nextTrip.visibility = 'shared';
+
+                const currentComps = toArray(nextTrip.companions);
+                const alreadyIn = currentComps.some(c => U.sanitizeKey(c.userKey || c.name) === U.sanitizeKey(uKey));
+                if (!alreadyIn) {
+                    nextTrip.companions = [...currentComps, {
+                        id: 'c_' + Date.now(),
+                        name: prof.name,
+                        userKey: U.sanitizeKey(uKey),
+                        avatar: prof.avatar || '✈️',
+                        color: 'bg-indigo-500'
+                    }];
+                }
+                persistTrip(nextTrip);
+
+                const joined = toArray(prof.joinedTripIds);
+                if (!joined.includes(nextTrip.id)) {
+                    persistProfile(uKey, { ...prof, joinedTripIds: [...joined, nextTrip.id] });
+                }
+                showToast(`✅ '${prof.name}' 님을 이 여행에 초대했습니다!`);
+            };
+
+            // ================================================================
+            // 6. 일정(장소) 핸들러
+            // ================================================================
+            const handleSearchAddress = async () => {
+                const query = (newPlace.place || newPlace.address || '').trim();
+                if (!query) return showToast('장소명이나 검색할 키워드를 먼저 입력해주세요.');
+                setIsSearchingAddress(true);
+                setAddressSearchResults([]);
+                try {
+                    const destHint = currentTrip?.country === '직접 입력' ? '' : (currentTrip?.city || currentTrip?.country || '');
+                    const data = await U.searchAddressNominatim(query, destHint);
+                    if (data.length > 0) {
+                        setAddressSearchResults(data);
+                        const firstClean = U.formatKoreanAddress(data[0].display_name, newPlace.place);
+                        setNewPlace(prev => ({ ...prev, address: prev.address || firstClean }));
+                    } else {
+                        showToast('검색 결과가 없습니다. 직접 주소를 입력하실 수 있습니다.');
+                    }
+                } catch (e) {
+                    showToast('주소 검색 서버 연결에 실패했습니다.');
+                } finally {
+                    setIsSearchingAddress(false);
+                }
+            };
+
+            const openAddPlaceModal = () => {
+                setEditingPlaceInfo(null);
+                setAddressSearchResults([]);
+                setNewPlace({
+                    day: selectedDay, time: '', endTime: '', place: '', address: '',
+                    category: 'sightseeing', memo: '', cost: '', currency: currentTrip?.currency || 'KRW'
+                });
+                setIsPlaceModalOpen(true);
+            };
+
+            const openEditPlaceModal = (dayNum, item) => {
+                setEditingPlaceInfo({ day: Number(dayNum), id: item.id });
+                setAddressSearchResults([]);
+                setNewPlace({
+                    day: Number(dayNum),
+                    time: item.time || '',
+                    endTime: item.endTime || '',
+                    place: item.place,
+                    address: item.address || '',
+                    category: item.category || 'sightseeing',
+                    memo: item.memo || '',
+                    cost: item.cost ? String(item.cost) : '',
+                    currency: item.currency || currentTrip?.currency || 'KRW'
+                });
+                setIsPlaceModalOpen(true);
+            };
+
+            const handleSavePlace = (e) => {
+                e.preventDefault();
+                if (!newPlace.place.trim() || !currentTrip) return;
+                if (newPlace.time && newPlace.endTime && newPlace.endTime < newPlace.time) {
+                    return showToast('⚠️ 종료 시각이 방문 시각보다 빠릅니다.');
+                }
+                const targetDay = Number(newPlace.day) || selectedDay;
+                const authorTag = currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : '익명';
+                const itemData = {
+                    id: editingPlaceInfo ? editingPlaceInfo.id : 'i_' + Date.now(),
+                    time: newPlace.time,
+                    endTime: newPlace.endTime || '',
+                    place: newPlace.place.trim(),
+                    address: newPlace.address.trim(),
+                    category: newPlace.category,
+                    memo: newPlace.memo.trim(),
+                    cost: Number(newPlace.cost) || 0,
+                    currency: newPlace.currency || currentTrip.currency,
+                    updatedBy: authorTag
+                };
+
+                updateCurrentTrip(t => {
+                    const nextItin = { ...(t.itinerary || {}) };
+                    if (editingPlaceInfo && Number(editingPlaceInfo.day) === targetDay) {
+                        const dayList = [...toArray(nextItin[targetDay])];
+                        const sameIdx = dayList.findIndex(x => x.id === editingPlaceInfo.id);
+                        if (sameIdx !== -1) {
+                            dayList[sameIdx] = itemData;
+                            nextItin[targetDay] = dayList;
+                            return { ...t, itinerary: nextItin };
+                        }
+                    }
+                    if (editingPlaceInfo && nextItin[editingPlaceInfo.day]) {
+                        nextItin[editingPlaceInfo.day] = toArray(nextItin[editingPlaceInfo.day]).filter(x => x.id !== editingPlaceInfo.id);
+                    }
+                    nextItin[targetDay] = [...toArray(nextItin[targetDay]), itemData];
+                    return { ...t, itinerary: nextItin };
+                });
+
+                setSelectedDay(targetDay);
+                setIsPlaceModalOpen(false);
+                showToast(editingPlaceInfo ? '✏️ 일정이 수정되었습니다.' : `✅ ${targetDay}일차에 '${itemData.place}' 일정이 추가되었습니다.`);
+            };
+
+            const handleDeletePlace = (day, item, e) => {
+                if (e) e.stopPropagation();
+                askConfirm({
+                    title: '일정 삭제 확인',
+                    message: `${day}일차의 [${item.place}] 일정을 정말 삭제하시겠습니까?`,
+                    onConfirm: () => {
+                        updateCurrentTrip(t => ({
+                            ...t,
+                            itinerary: { ...t.itinerary, [day]: toArray(t.itinerary?.[day]).filter(x => x.id !== item.id) }
+                        }));
+                        showToast('🗑️ 일정이 삭제되었습니다.');
+                    }
+                });
+            };
+
+            const movePlaceOrder = (dayNum, index, direction, e) => {
+                if (e) e.stopPropagation();
+                if (!currentTrip) return;
+                const list = [...toArray(currentTrip.itinerary?.[dayNum])];
+                if (list.length <= 1) return;
+
+                let targetIndex = index;
+                if (direction === 'top') targetIndex = 0;
+                else if (direction === 'up') targetIndex = Math.max(0, index - 1);
+                else if (direction === 'down') targetIndex = Math.min(list.length - 1, index + 1);
+                else if (direction === 'bottom') targetIndex = list.length - 1;
+                if (targetIndex === index) return;
+
+                const [moved] = list.splice(index, 1);
+                list.splice(targetIndex, 0, moved);
+                updateCurrentTrip(t => ({ ...t, itinerary: { ...t.itinerary, [dayNum]: list } }));
+            };
+
+            // ================================================================
+            // 7. 가계부 지출 & [v0.2.0] 중간 정산 핸들러
+            // ================================================================
+            const openAddExpenseModal = (defaultDay = null) => {
+                if (!currentTrip) return;
+                setEditingExpenseId(null);
+                const resolvedDay = defaultDay !== null
+                    ? defaultDay
+                    : (expenseDayFilter === 'all' ? selectedDay : Number(expenseDayFilter));
+                setNewExpense({
+                    day: resolvedDay, title: '', amount: '',
+                    currency: currentTrip.currency,
+                    payerId: companions[0]?.id || 'c1',
+                    splitWith: companions.map(c => c.id),
+                    category: 'food', method: 'card'
+                });
+                setIsExpenseModalOpen(true);
+            };
+
+            const openEditExpenseModal = (exp) => {
+                setEditingExpenseId(exp.id);
+                setNewExpense({
+                    day: exp.day !== undefined ? Number(exp.day) : 1,
+                    title: exp.title,
+                    amount: String(exp.amount),
+                    currency: exp.currency,
+                    payerId: exp.payerId,
+                    splitWith: toArray(exp.splitWith),
+                    category: exp.category || 'food',
+                    method: exp.method || 'card'
+                });
+                setIsExpenseModalOpen(true);
+            };
+
+            const handleSaveExpense = (e) => {
+                e.preventDefault();
+                if (!newExpense.title.trim() || !newExpense.amount || !currentTrip) return;
+                if (newExpense.splitWith.length === 0) return showToast('함께 정산할 인원을 최소 1명 이상 선택해주세요.');
+
+                const authorTag = currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : '익명';
+                const itemData = {
+                    id: editingExpenseId || 'e_' + Date.now(),
+                    day: Number(newExpense.day),
+                    title: newExpense.title.trim(),
+                    amount: Number(newExpense.amount),
+                    currency: newExpense.currency,
+                    payerId: newExpense.payerId,
+                    splitWith: newExpense.splitWith,
+                    category: newExpense.category,
+                    method: newExpense.method,
+                    updatedBy: authorTag
+                };
+                updateCurrentTrip(t => ({
+                    ...t,
+                    expenses: editingExpenseId
+                        ? toArray(t.expenses).map(x => x.id === editingExpenseId ? itemData : x)
+                        : [itemData, ...toArray(t.expenses)]
+                }));
+                setIsExpenseModalOpen(false);
+                showToast(editingExpenseId ? '✏️ 지출 내역이 수정되었습니다.' : '💰 가계부에 지출이 기록되었습니다.');
+            };
+
+            const handleDeleteExpense = (exp, e) => {
+                if (e) e.stopPropagation();
+                askConfirm({
+                    title: '지출 내역 삭제 확인',
+                    message: `[${exp.title} - ${Number(exp.amount).toLocaleString()} ${exp.currency}] 내역을 삭제하시겠습니까?`,
+                    onConfirm: () => {
+                        updateCurrentTrip(t => ({ ...t, expenses: toArray(t.expenses).filter(x => x.id !== exp.id) }));
+                        showToast('🗑️ 지출 내역이 삭제되었습니다.');
+                    }
+                });
+            };
+
+            const moveExpenseOrder = (expId, direction, filteredList, e) => {
+                if (e) e.stopPropagation();
+                if (!currentTrip) return;
+                const fullList = [...expenses];
+                const curIdx = filteredList.findIndex(x => x.id === expId);
+                if (curIdx === -1 || filteredList.length <= 1) return;
+
+                let targetIdx = curIdx;
+                if (direction === 'top') targetIdx = 0;
+                else if (direction === 'up') targetIdx = Math.max(0, curIdx - 1);
+                else if (direction === 'down') targetIdx = Math.min(filteredList.length - 1, curIdx + 1);
+                else if (direction === 'bottom') targetIdx = filteredList.length - 1;
+                if (targetIdx === curIdx) return;
+
+                const targetId = filteredList[targetIdx].id;
+                const fromFull = fullList.findIndex(x => x.id === expId);
+                const toFull = fullList.findIndex(x => x.id === targetId);
+                if (fromFull === -1 || toFull === -1) return;
+
+                const [moved] = fullList.splice(fromFull, 1);
+                fullList.splice(toFull, 0, moved);
+                updateCurrentTrip(t => ({ ...t, expenses: fullList }));
+            };
+
+            // [v0.2.0] 원클릭 중간 정산 완료 처리
+            const handleQuickSettle = (transfer) => {
+                if (!transfer || !currentTrip) return;
+                askConfirm({
+                    title: '중간 정산 송금 완료 처리',
+                    message: `${transfer.fromAvatar} ${transfer.from} ➔ ${transfer.toAvatar} ${transfer.to}\n${Number(transfer.amount).toLocaleString()}원 송금을 완료 처리하시겠습니까?\n\n(여행 총 지출 금액은 유지되며, 남은 정산액에서만 차감됩니다.)`,
+                    confirmText: '정산 완료 반영',
+                    tone: 'primary',
+                    onConfirm: () => {
+                        const record = B.createSettlementRecord({
+                            fromId: transfer.fromId,
+                            toId: transfer.toId,
+                            amountKRW: transfer.amount,
+                            memo: '원클릭 중간 정산',
+                            createdBy: currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : ''
+                        });
+                        updateCurrentTrip(t => ({
+                            ...t,
+                            settlements: [record, ...B.normalizeSettlements(t.settlements)]
+                        }));
+                        showToast(`✅ ${transfer.from} ➔ ${transfer.to} ${Number(transfer.amount).toLocaleString()}원 정산이 반영되었습니다!`);
+                    }
+                });
+            };
+
+            // [v0.2.0] 일부 금액 수동 중간 정산 기록 추가
+            const handleAddManualSettlement = ({ fromId, toId, amountKRW, memo }) => {
+                if (!fromId || !toId || fromId === toId) {
+                    showToast('⚠️ 보낸 사람과 받은 사람은 서로 다른 멤버여야 합니다.');
+                    return false;
+                }
+                if (!amountKRW || amountKRW <= 0) {
+                    showToast('⚠️ 올바른 송금 금액을 입력해주세요.');
+                    return false;
+                }
+                const record = B.createSettlementRecord({
+                    fromId,
+                    toId,
+                    amountKRW,
+                    memo,
+                    createdBy: currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : ''
+                });
+                updateCurrentTrip(t => ({
+                    ...t,
+                    settlements: [record, ...B.normalizeSettlements(t.settlements)]
+                }));
+                showToast(`✅ ${Number(amountKRW).toLocaleString()}원 중간 정산 송금이 기록되었습니다.`);
+                return true;
+            };
+
+            // [v0.2.0] 중간 정산 기록 취소 (삭제)
+            const handleDeleteSettlement = (stl, fromComp, toComp) => {
+                askConfirm({
+                    title: '중간 정산 기록 취소',
+                    message: `[${fromComp.name} ➔ ${toComp.name} · ${Number(stl.amountKRW).toLocaleString()}원] 송금 기록을 취소하시겠습니까?\n취소 시 해당 금액이 다시 미정산 잔액으로 복구됩니다.`,
+                    confirmText: '기록 취소하기',
+                    onConfirm: () => {
+                        updateCurrentTrip(t => ({
+                            ...t,
+                            settlements: B.normalizeSettlements(t.settlements).filter(s => s.id !== stl.id)
+                        }));
+                        showToast('↩️ 중간 정산 기록이 취소되었습니다.');
+                    }
+                });
+            };
+
+            // ================================================================
+            // 8. 체크리스트 & 클립보드 도우미
+            // ================================================================
+            const isItemCheckedByCompanion = (item, compId) => {
+                return Boolean(item.checkedBy && typeof item.checkedBy === 'object' && item.checkedBy[compId]);
+            };
+
+            const fullyCompletedCheckCount = useMemo(() => {
+                if (checklist.length === 0 || companions.length === 0) return 0;
+                return checklist.filter(item => companions.every(comp => isItemCheckedByCompanion(item, comp.id))).length;
+            }, [checklist, companions]);
+
+            const handleCopyText = async (text, msg) => {
+                const ok = await U.copyToClipboard(text);
+                showToast(ok ? msg : '복사에 실패했습니다.');
+            };
+
+            const shareSummaryText = useMemo(
+                () => U.generateCleanShareSummary(currentTrip, budgetSummary),
+                [currentTrip, budgetSummary, presetsVersion]
+            );
+
+            // modals.jsx가 아직 준비되지 않았을 때 방어
+            if (!M) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center p-6 text-center text-sm font-bold text-slate-500">
+                        모듈을 불러오는 중입니다... (계속 멈춰있다면 새로고침 해주세요)
+                    </div>
+                );
+            }
+
+            const selectedDayList = toArray(itinerary[selectedDay]);
+
+            return (
+                <div className="min-h-screen pb-20">
+                    {/* 상단 토스트 알림 */}
+                    {toastMessage && (
+                        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[110] bg-slate-900/95 text-white px-5 py-2.5 rounded-full shadow-xl flex items-center gap-2 text-xs sm:text-sm font-bold">
+                            <span>✨</span>
+                            <span>{toastMessage}</span>
+                        </div>
+                    )}
+
+                    {/* ==================== 2단 압축 상단 헤더 ==================== */}
+                    <header className="bg-gradient-to-r from-[#00C48C] via-[#00B894] to-[#00A896] text-white pt-3.5 pb-4 px-4 sm:px-6 lg:px-10 shadow-md">
+                        <div className="max-w-7xl mx-auto space-y-3">
+                            {/* 1열: 상태·계정 바 + 내 여행 보관함·새 여행 */}
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0 overflow-x-auto no-scrollbar">
+                                    <div className="bg-black/20 backdrop-blur-md px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border border-white/15 shrink-0">
+                                        <span className={`w-2 h-2 rounded-full ${isDbConnected ? 'bg-lime-300 shadow-[0_0_8px_#a3e635]' : 'bg-rose-400'}`}></span>
+                                        <span className="font-mono text-white/95">{isSyncing ? '저장중..' : APP_VERSION}</span>
+                                    </div>
+
+                                    {currentProfile && (
+                                        <div className="inline-flex items-center bg-white/20 rounded-full border border-white/25 overflow-hidden shrink-0">
+                                            <button
+                                                onClick={() => {
+                                                    requestSecurityVerification(
+                                                        '내 프로필 수정 확인',
+                                                        '개인정보(이름·아이콘·비밀번호)를 수정하려면 현재 비밀번호를 입력해주세요.',
+                                                        () => {
+                                                            setEditMyProfileForm({ name: currentProfile.name, pin: '', avatar: currentProfile.avatar || '✈️' });
+                                                            setIsEditMyProfileOpen(true);
+                                                        }
+                                                    );
+                                                }}
+                                                className="hover:bg-white/20 px-3 py-1 text-xs font-extrabold flex items-center gap-1 whitespace-nowrap"
+                                            >
+                                                <span>{currentProfile.avatar}</span>
+                                                <span>{currentProfile.name}</span>
+                                                {isAdmin && <span className="bg-amber-300 text-slate-950 text-[10px] px-1.5 rounded-full font-black">관리</span>}
+                                            </button>
+                                            <button
+                                                onClick={handleToggleTheme}
+                                                title="라이트/다크 모드 전환 (내 계정에 자동 저장)"
+                                                className="bg-black/10 hover:bg-black/25 px-2.5 py-1 text-xs font-bold border-l border-white/20 whitespace-nowrap"
+                                            >
+                                                {isDarkMode ? '🌙' : '☀️'}
+                                            </button>
+                                            <button
+                                                onClick={() => setIsLoginModalOpen(true)}
+                                                className="bg-black/15 hover:bg-black/30 px-2.5 py-1 text-[11px] font-bold border-l border-white/20 whitespace-nowrap"
+                                            >
+                                                계정 전환
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {isAdmin && (
+                                        <button
+                                            onClick={() => {
+                                                requestSecurityVerification(
+                                                    '사용자 관리 진입 확인',
+                                                    '전체 사용자 관리 화면으로 이동하려면 총괄 관리자 비밀번호를 입력해주세요.',
+                                                    () => setIsUserManageModalOpen(true)
+                                                );
+                                            }}
+                                            className="bg-amber-400 hover:bg-amber-300 text-slate-950 px-3 py-1 rounded-full text-xs font-extrabold shadow-2xs shrink-0 whitespace-nowrap"
+                                        >
+                                            👑 사용자 관리 ({Object.keys(registeredProfiles).length})
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                        onClick={() => setIsTripListModalOpen(true)}
+                                        className="bg-black/20 hover:bg-black/30 px-3.5 py-1 rounded-full text-xs font-extrabold border border-white/20 whitespace-nowrap"
+                                    >
+                                        📂 내 여행 ({allVisibleTrips.length})
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            const defaultCountry = (currentTrip?.country && COUNTRY_PRESETS[currentTrip.country]) ? currentTrip.country : '대한민국';
+                                            const defaultMeta = COUNTRY_PRESETS[defaultCountry] || COUNTRY_PRESETS['대한민국'];
+                                            setNewTripForm(prev => ({
+                                                ...prev,
+                                                country: defaultCountry,
+                                                city: defaultMeta?.cities?.[0] || '서울',
+                                                currency: defaultMeta?.currency || 'KRW',
+                                                visibility: currentTrip?.visibility || 'private',
+                                                invitedUserKeys: []
+                                            }));
+                                            setIsNewTripModalOpen(true);
+                                        }}
+                                        className="bg-white text-teal-900 hover:bg-teal-50 px-3.5 py-1 rounded-full text-xs font-extrabold shadow-2xs whitespace-nowrap"
+                                    >
+                                        + 새 여행
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* 2열: 현재 열린 여행 타이틀 및 핵심 메타 */}
+                            {currentTrip ? (
+                                <div className="pt-2.5 border-t border-white/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                                    <div className="min-w-0 space-y-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="bg-black/20 px-2.5 py-0.5 rounded-md text-xs font-extrabold">
+                                                {currentTrip.visibility === 'private' ? '🔒 개인' : '👥 공유'}
+                                            </span>
+                                            <h1
+                                                onClick={() => setIsTripListModalOpen(true)}
+                                                className="text-xl sm:text-2xl lg:text-[26px] font-extrabold tracking-tight truncate cursor-pointer hover:underline"
+                                                title="클릭하여 다른 여행 전환"
+                                            >
+                                                ✈️ {currentTrip.title}
+                                            </h1>
+                                            <button
+                                                onClick={openEditTripModal}
+                                                className="bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 whitespace-nowrap"
+                                            >
+                                                ✏️ 여행 수정
+                                            </button>
+                                        </div>
+
+                                        <div className="flex items-center gap-2 text-white/95 text-xs sm:text-sm font-semibold flex-wrap">
+                                            <span>📍 {currentTrip.destination}</span>
+                                            <span>·</span>
+                                            <span>{U.formatDateDot(currentTrip.startDate, true)} ~ {U.formatDateDot(currentTrip.endDate, true)} ({tripDays.length}일간)</span>
+                                            {currentTrip.visibility !== 'private' && currentTrip.shareCode && (
+                                                <button
+                                                    onClick={() => handleCopyText(currentTrip.shareCode, `초대코드(${currentTrip.shareCode}) 복사 완료!`)}
+                                                    className="bg-black/20 hover:bg-black/30 px-2.5 py-0.5 rounded-md text-xs font-extrabold whitespace-nowrap"
+                                                >
+                                                    {currentTrip.shareCode} 📋
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        {localTimeInfo && (
+                                            <div className="flex items-center gap-2 text-xs text-teal-50 font-semibold flex-wrap">
+                                                <span>🇰🇷 한국 {localTimeInfo.kstStr}</span>
+                                                {localTimeInfo.localStr && (
+                                                    <>
+                                                        <span>⇄</span>
+                                                        <span className="bg-black/15 px-2.5 py-0.5 rounded-md font-bold text-white">
+                                                            🕒 현지 {localTimeInfo.localStr} ({localTimeInfo.diffLabel})
+                                                        </span>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2 shrink-0 self-start sm:self-center">
+                                        <button
+                                            onClick={() => setIsMemberModalOpen(true)}
+                                            className="flex items-center gap-1.5 bg-black/20 hover:bg-black/30 px-3.5 py-2 rounded-xl border border-white/20 text-xs sm:text-sm font-extrabold whitespace-nowrap"
+                                        >
+                                            <span>👥 멤버 {companions.length}명</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setIsShareModalOpen(true)}
+                                            className="bg-white text-teal-800 hover:bg-teal-50 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-extrabold shadow-2xs whitespace-nowrap"
+                                        >
+                                            📤 공유
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="py-4 text-center border-t border-white/20">
+                                    <p className="text-sm font-bold text-white/95 mb-2">등록된 여행 일정이 없습니다.</p>
+                                    <div className="flex justify-center gap-2">
+                                        <button onClick={() => setIsNewTripModalOpen(true)} className="bg-white text-teal-800 font-extrabold text-xs sm:text-sm px-4 py-2 rounded-xl shadow-xs">+ 새 여행 만들기</button>
+                                        <button onClick={() => setIsJoinCodeModalOpen(true)} className="bg-black/25 text-white font-bold text-xs sm:text-sm px-4 py-2 rounded-xl border border-white/25">🔑 초대코드 입력</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </header>
+
+                    {/* ==================== 메인 컨텐츠 ==================== */}
+                    {currentTrip && (
+                        <>
+                            {/* 메인 3대 탭 네비게이션 */}
+                            <div className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
+                                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 flex">
+                                    {[
+                                        { id: 'itinerary', label: '일정', emoji: '🗓️' },
+                                        { id: 'budget', label: '가계부', emoji: '💰' },
+                                        { id: 'checklist', label: '체크', emoji: '✅' },
+                                    ].map(tab => {
+                                        const isActive = activeTab === tab.id;
+                                        return (
+                                            <button
+                                                key={tab.id}
+                                                onClick={() => setActiveTab(tab.id)}
+                                                className={`flex-1 py-3.5 px-2 flex items-center justify-center gap-2 text-sm sm:text-base font-extrabold border-b-2 whitespace-nowrap transition ${
+                                                    isActive ? 'border-[#00C48C] text-[#00A878]' : 'border-transparent text-slate-400 hover:text-slate-700'
+                                                }`}
+                                            >
+                                                <span>{tab.emoji}</span>
+                                                <span>{tab.label}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-10 pt-6">
+                                {/* ==================== 1. 일정 탭 (와이드 2단 분할) ==================== */}
+                                {activeTab === 'itinerary' && (
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                                        {/* 좌측 고정 컬럼: 여행 일차 선택 + 이동 동선 */}
+                                        <div className="lg:col-span-5 xl:col-span-4 space-y-4 lg:sticky lg:top-16">
+                                            <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-2xs space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <h3 className="text-sm sm:text-base font-extrabold text-slate-800">🗓️ 여행 일차 선택</h3>
+                                                    <span className="text-xs font-bold text-slate-400">총 {tripDays.length}일</span>
+                                                </div>
+                                                <div className="flex lg:grid lg:grid-cols-2 items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                                                    {tripDays.map(dayNum => {
+                                                        const isSelected = Number(dayNum) === selectedDay;
+                                                        const subDate = U.getDayDateDot(currentTrip.startDate, dayNum, false);
+                                                        return (
+                                                            <button
+                                                                key={dayNum}
+                                                                onClick={() => setSelectedDay(Number(dayNum))}
+                                                                className={`px-3.5 py-2.5 rounded-2xl text-xs sm:text-sm font-extrabold transition flex items-center justify-between gap-1.5 shrink-0 ${
+                                                                    isSelected ? 'bg-[#00C48C] text-white shadow-sm' : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
+                                                                }`}
+                                                            >
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span>{dayNum}일차</span>
+                                                                    {subDate && <span className={`text-xs font-semibold ${isSelected ? 'text-white/90' : 'text-slate-400'}`}>{subDate}</span>}
+                                                                </div>
+                                                                <span className={`text-xs px-2 py-0.5 rounded-full font-extrabold ${isSelected ? 'bg-black/20 text-white' : 'bg-white text-slate-500 border border-slate-200'}`}>
+                                                                    {toArray(itinerary[dayNum]).length}
+                                                                </span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-white rounded-3xl p-4 sm:p-5 border border-slate-200 shadow-2xs">
+                                                <div className="flex flex-wrap items-center justify-between gap-2 mb-3.5">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="w-2.5 h-2.5 rounded-full bg-[#00C48C]"></span>
+                                                        <h3 className="text-sm sm:text-base font-extrabold text-slate-800">
+                                                            {selectedDay}일차 ({U.getDayDateDot(currentTrip.startDate, selectedDay, false)}) 이동 동선
+                                                        </h3>
+                                                    </div>
+                                                    {selectedDayList.length > 0 && (
+                                                        <a
+                                                            href={U.getDayRouteMapUrl(selectedDay, currentTrip)}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="bg-emerald-50 hover:bg-emerald-100 text-[#00A878] border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1 transition"
+                                                        >
+                                                            🗺️ 구글 지도 전체 동선 보기 ↗
+                                                        </a>
+                                                    )}
+                                                </div>
+
+                                                {selectedDayList.length === 0 ? (
+                                                    <div className="h-24 bg-slate-50 rounded-2xl flex items-center justify-center text-xs sm:text-sm text-slate-400 border border-dashed border-slate-200 px-4 text-center">
+                                                        장소를 등록하면 순서대로 동선과 구글 지도 경로가 생성됩니다.
+                                                    </div>
+                                                ) : (
+                                                    <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-200/70 overflow-x-auto lg:overflow-visible no-scrollbar">
+                                                        <div className="flex lg:flex-col items-center lg:items-stretch min-w-max lg:min-w-0 gap-2">
+                                                            {selectedDayList.map((item, idx) => (
+                                                                <React.Fragment key={item.id}>
+                                                                    <div
+                                                                        onClick={() => openEditPlaceModal(selectedDay, item)}
+                                                                        className="flex items-center gap-2.5 bg-white px-3.5 py-2.5 rounded-xl shadow-2xs border border-slate-200 cursor-pointer hover:border-[#00C48C] transition"
+                                                                    >
+                                                                        <span className="w-6 h-6 rounded-full bg-[#00C48C] text-white text-xs font-extrabold flex items-center justify-center shrink-0">
+                                                                            {idx + 1}
+                                                                        </span>
+                                                                        <div className="min-w-0 flex-1">
+                                                                            <div className="text-xs sm:text-sm font-extrabold text-slate-800 truncate">{item.place}</div>
+                                                                            <div className="text-[11px] text-slate-400">{item.time ? (item.endTime ? `${item.time} ~ ${item.endTime}` : item.time) : '시각 미정'}</div>
+                                                                        </div>
+                                                                    </div>
+                                                                    {idx < selectedDayList.length - 1 && (
+                                                                        <div className="text-[#00C48C] font-black text-xs px-0.5 lg:pl-6 lg:py-0.5">
+                                                                            <span className="lg:hidden">➔</span>
+                                                                            <span className="hidden lg:inline">↓</span>
+                                                                        </div>
+                                                                    )}
+                                                                </React.Fragment>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* 우측 메인 컬럼: 상세 일정 타임라인 */}
+                                        <div className="lg:col-span-7 xl:col-span-8 space-y-4">
+                                            <div className="flex justify-between items-center px-1">
+                                                <div>
+                                                    <h3 className="text-lg sm:text-xl font-extrabold text-slate-800">{selectedDay}일차 상세 일정</h3>
+                                                    <p className="text-xs text-slate-400">우측 꺾쇠(⟪ ∧ ∨ ⟫)로 순서를 변경하세요</p>
+                                                </div>
+                                                <button
+                                                    onClick={openAddPlaceModal}
+                                                    className="bg-[#00C48C] hover:bg-[#00A878] text-white text-xs sm:text-sm font-extrabold px-4 py-2.5 rounded-xl shadow-xs transition whitespace-nowrap"
+                                                >
+                                                    + 새 장소
+                                                </button>
+                                            </div>
+
+                                            {selectedDayList.length === 0 ? (
+                                                <div className="bg-white rounded-3xl p-12 text-center border border-slate-200">
+                                                    <p className="text-slate-600 font-extrabold text-base mb-1">아직 등록된 장소가 없습니다</p>
+                                                    <button onClick={openAddPlaceModal} className="mt-2 bg-emerald-50 text-[#00A878] text-xs sm:text-sm font-extrabold px-5 py-2.5 rounded-xl border border-emerald-200">
+                                                        + 첫 장소 등록하기
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="relative pl-7 space-y-3.5 before:content-[''] before:absolute before:left-3 before:top-5 before:bottom-5 before:w-0.5 before:bg-emerald-200">
+                                                    {selectedDayList.map((item, idx) => {
+                                                        const meta = CATEGORY_META[item.category] || CATEGORY_META.sightseeing || { emoji: '📍', label: '관광', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' };
+                                                        const totalCount = selectedDayList.length;
+                                                        const displayAddr = U.upgradeDisplayAddress(item.address);
+                                                        return (
+                                                            <div key={item.id} className="relative">
+                                                                <div className="absolute -left-7 top-4 w-6 h-6 rounded-full bg-[#00C48C] text-white text-xs font-extrabold flex items-center justify-center ring-4 ring-[#F4F7F9]">
+                                                                    {idx + 1}
+                                                                </div>
+                                                                <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs hover:border-[#00C48C] transition">
+                                                                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                                                                        <div onClick={() => openEditPlaceModal(selectedDay, item)} className="space-y-2 flex-1 cursor-pointer">
+                                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                                <span className="text-xs sm:text-sm font-extrabold text-[#00A878] bg-emerald-50 px-2.5 py-0.5 rounded-lg">
+                                                                                    {item.time ? (item.endTime ? `${item.time} ~ ${item.endTime}` : item.time) : '시각미정'}
+                                                                                </span>
+                                                                                <span className={`text-xs font-bold px-2.5 py-0.5 rounded-lg border ${meta.color}`}>
+                                                                                    {meta.emoji} {meta.label}
+                                                                                </span>
+                                                                                <h4 className="text-base sm:text-lg font-extrabold text-slate-800">{item.place}</h4>
+                                                                                {item.updatedBy && (
+                                                                                    <span className="text-[11px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">
+                                                                                        ✍️ {item.updatedBy}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+
+                                                                            {displayAddr && (
+                                                                                <div className="text-xs sm:text-sm text-slate-500">📍 {displayAddr}</div>
+                                                                            )}
+
+                                                                            <div className="pt-0.5">
+                                                                                <a
+                                                                                    href={U.getSinglePlaceMapUrl(item, currentTrip.destination)}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    onClick={e => e.stopPropagation()}
+                                                                                    className="inline-flex items-center gap-1 text-xs font-bold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg"
+                                                                                >
+                                                                                    🗺️ 구글 지도 위치 ↗
+                                                                                </a>
+                                                                            </div>
+
+                                                                            {item.memo && (
+                                                                                <p className="text-xs sm:text-sm text-slate-600 bg-slate-50 px-3.5 py-2.5 rounded-xl border border-slate-100">
+                                                                                    💡 {item.memo}
+                                                                                </p>
+                                                                            )}
+                                                                        </div>
+
+                                                                        <div className="flex sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100 gap-2.5 shrink-0">
+                                                                            <div className="flex items-center gap-2">
+                                                                                {item.cost > 0 ? (
+                                                                                    <>
+                                                                                        <button
+                                                                                            onClick={(e) => {
+                                                                                                e.stopPropagation();
+                                                                                                const newExp = {
+                                                                                                    id: 'e_' + Date.now(),
+                                                                                                    day: selectedDay,
+                                                                                                    title: item.place,
+                                                                                                    amount: item.cost,
+                                                                                                    currency: item.currency || currentTrip.currency,
+                                                                                                    payerId: companions[0]?.id || 'c1',
+                                                                                                    splitWith: companions.map(c => c.id),
+                                                                                                    category: item.category,
+                                                                                                    method: 'card',
+                                                                                                    updatedBy: currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : ''
+                                                                                                };
+                                                                                                updateCurrentTrip(t => ({ ...t, expenses: [newExp, ...toArray(t.expenses)] }));
+                                                                                                showToast(`💰 '${item.place}' 비용이 가계부에 추가되었습니다.`);
+                                                                                            }}
+                                                                                            className="text-xs font-bold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 whitespace-nowrap"
+                                                                                        >
+                                                                                            가계부로 보내기
+                                                                                        </button>
+                                                                                        <div className="text-right">
+                                                                                            <div className="text-xs sm:text-sm font-extrabold text-slate-800">
+                                                                                                예상 {Number(item.cost).toLocaleString()} {item.currency || currentTrip.currency}
+                                                                                            </div>
+                                                                                            <div className="text-[11px] text-slate-400">
+                                                                                                ≈ {B.toKRW(currentTrip, item.cost, item.currency || currentTrip.currency, selectedDay).toLocaleString()}원
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <span className="text-xs text-slate-400">비용 미정</span>
+                                                                                )}
+                                                                            </div>
+
+                                                                            <div className="flex items-center gap-1.5">
+                                                                                <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
+                                                                                    <button onClick={(e) => movePlaceOrder(selectedDay, idx, 'top', e)} disabled={idx === 0} className="w-7 h-7 flex items-center justify-center text-xs font-black rounded hover:bg-white disabled:opacity-25">⟪</button>
+                                                                                    <button onClick={(e) => movePlaceOrder(selectedDay, idx, 'up', e)} disabled={idx === 0} className="w-7 h-7 flex items-center justify-center text-xs font-black rounded hover:bg-white disabled:opacity-25">∧</button>
+                                                                                    <button onClick={(e) => movePlaceOrder(selectedDay, idx, 'down', e)} disabled={idx === totalCount - 1} className="w-7 h-7 flex items-center justify-center text-xs font-black rounded hover:bg-white disabled:opacity-25">∨</button>
+                                                                                    <button onClick={(e) => movePlaceOrder(selectedDay, idx, 'bottom', e)} disabled={idx === totalCount - 1} className="w-7 h-7 flex items-center justify-center text-xs font-black rounded hover:bg-white disabled:opacity-25">⟫</button>
+                                                                                </div>
+                                                                                <button onClick={() => openEditPlaceModal(selectedDay, item)} className="text-xs font-bold text-slate-600 hover:bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">수정</button>
+                                                                                <button onClick={(e) => handleDeletePlace(selectedDay, item, e)} className="text-xs font-bold text-rose-500 hover:bg-rose-50 px-2.5 py-1.5 rounded-lg">삭제</button>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ==================== 2. 가계부 탭 (중간 정산 통합) ==================== */}
+                                {activeTab === 'budget' && (
+                                    <div className="space-y-5">
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            {/* 총 지출 & 예산 카드 */}
+                                            <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs flex flex-col justify-between gap-3">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div>
+                                                        <span className="text-xs font-extrabold text-slate-400">총 지출 금액 (원화 환산 · 중간 정산 무관 보존)</span>
+                                                        <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 mt-0.5">
+                                                            {budgetSummary.totalSpentKRW.toLocaleString()}<span className="text-sm font-bold text-slate-500 ml-1">원</span>
+                                                        </div>
+                                                        {budgetSummary.totalSettledKRW > 0 && (
+                                                            <div className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-extrabold text-sky-700 bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded-full">
+                                                                <span>✅ 중간 정산 완료 {budgetSummary.totalSettledKRW.toLocaleString()}원 ({budgetSummary.settlements.length}건)</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <button onClick={() => setIsRateModalOpen(true)} className="bg-emerald-50 hover:bg-emerald-100 text-[#00A878] border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-extrabold shrink-0">
+                                                        💱 통화 · 일자별 환율
+                                                    </button>
+                                                </div>
+                                                <div>
+                                                    <div className="flex justify-between text-xs font-bold mb-1">
+                                                        <span className="text-slate-500">목표 예산: {(currentTrip.budgetKRW || 0).toLocaleString()}원</span>
+                                                        <span className={budgetSummary.remainingKRW >= 0 ? 'text-[#00A878]' : 'text-rose-600'}>
+                                                            {budgetSummary.remainingKRW >= 0 ? `${budgetSummary.remainingKRW.toLocaleString()}원 여유` : `${Math.abs(budgetSummary.remainingKRW).toLocaleString()}원 초과`}
+                                                        </span>
+                                                    </div>
+                                                    <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                                                        <div
+                                                            className={`h-full rounded-full ${budgetSummary.remainingKRW >= 0 ? 'bg-gradient-to-r from-[#00D194] to-[#00C48C]' : 'bg-rose-500'}`}
+                                                            style={{ width: `${budgetSummary.budgetUsagePercent}%` }}
+                                                        ></div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* 정산 송금 요약 & 원클릭 중간 정산 카드 */}
+                                            <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-2xs flex flex-col justify-between gap-3">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div>
+                                                        <span className="text-xs font-extrabold text-slate-400">1/N 자동 계산 · 중간 정산 반영</span>
+                                                        <h3 className="text-base font-extrabold text-slate-800 mt-0.5">남은 정산 송금 요약</h3>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <button onClick={() => handleCopyText(shareSummaryText, '정산 안내문 복사 완료!')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-2.5 py-1.5 rounded-xl">📋 복사</button>
+                                                        <button onClick={() => setIsSettlementModalOpen(true)} className="bg-emerald-50 hover:bg-emerald-100 text-[#00A878] border border-emerald-200 text-xs font-extrabold px-3 py-1.5 rounded-xl">상세·중간 정산 ↗</button>
+                                                    </div>
+                                                </div>
+                                                <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3 space-y-2 max-h-36 overflow-y-auto">
+                                                    {budgetSummary.transfers.length === 0 ? (
+                                                        <div className="text-xs text-slate-400 py-3 text-center">주고받을 남은 정산 차액이 없습니다.</div>
+                                                    ) : (
+                                                        budgetSummary.transfers.map((t, idx) => (
+                                                            <div key={idx} className="flex items-center justify-between gap-2 text-xs">
+                                                                <span className="font-bold text-slate-700 truncate">
+                                                                    {t.fromAvatar} {t.from} <span className="text-[#00A878] font-black">➔</span> {t.toAvatar} {t.to}
+                                                                </span>
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    <span className="font-extrabold text-[#00A878]">{t.amount.toLocaleString()}원</span>
+                                                                    <button
+                                                                        onClick={() => handleQuickSettle(t)}
+                                                                        className="bg-[#00C48C] hover:bg-[#00A878] text-white text-[11px] font-extrabold px-2 py-1 rounded-lg transition"
+                                                                        title="이 금액을 중간 정산 완료 처리합니다"
+                                                                    >
+                                                                        정산 완료
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ))
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* 지출 필터 & 리스트 */}
+                                        <div className="space-y-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                                                    <button onClick={() => setExpenseDayFilter('all')} className={`px-3 py-1.5 rounded-xl text-xs font-extrabold ${expenseDayFilter === 'all' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>전체 ({expenses.length})</button>
+                                                    <button onClick={() => setExpenseDayFilter('0')} className={`px-3 py-1.5 rounded-xl text-xs font-extrabold shrink-0 ${expenseDayFilter === '0' ? 'bg-sky-600 text-white' : 'bg-white text-sky-700 border border-sky-200'}`}>✈️ 사전 지출 ({expenses.filter(e => Number(e.day) === 0).length})</button>
+                                                    {tripDays.map(d => {
+                                                        const subDate = U.getDayDateDot(currentTrip.startDate, d, false);
+                                                        return (
+                                                            <button key={d} onClick={() => setExpenseDayFilter(String(d))} className={`px-3 py-1.5 rounded-xl text-xs font-extrabold shrink-0 ${expenseDayFilter === String(d) ? 'bg-[#00C48C] text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                                                                {d}일차 {subDate ? `(${subDate})` : ''} ({expenses.filter(e => Number(e.day) === Number(d)).length})
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+
+                                                <div className="flex items-center gap-2">
+                                                    {expenseDayFilter !== 'all' && (
+                                                        <span className="text-xs font-extrabold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl">
+                                                            소계 {filteredExpenseTotalKRW.toLocaleString()}원
+                                                        </span>
+                                                    )}
+                                                    <button
+                                                        onClick={() => openAddExpenseModal()}
+                                                        className="bg-[#00C48C] hover:bg-[#00A878] text-white text-xs sm:text-sm font-extrabold px-4 py-2 rounded-xl shadow-xs whitespace-nowrap"
+                                                    >
+                                                        + 새 지출
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {filteredExpenses.length === 0 ? (
+                                                <div className="bg-white rounded-3xl p-10 text-center border border-slate-200 text-slate-400 text-xs sm:text-sm">
+                                                    등록된 지출 내역이 없습니다.
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2.5">
+                                                    {filteredExpenses.map((exp, idx) => {
+                                                        const meta = CATEGORY_META[exp.category] || CATEGORY_META.food || { emoji: '💳', color: 'text-slate-700 bg-slate-100 border-slate-200' };
+                                                        const payer = companions.find(c => c.id === exp.payerId);
+                                                        const krwAmount = B.toKRW(currentTrip, exp.amount, exp.currency, exp.day || 0);
+                                                        const totalFiltered = filteredExpenses.length;
+
+                                                        return (
+                                                            <div key={exp.id} className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs hover:border-[#00C48C] transition">
+                                                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                                                    <div onClick={() => openEditExpenseModal(exp)} className="flex items-center gap-3 cursor-pointer flex-1">
+                                                                        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center border text-base shrink-0 ${meta.color}`}>{meta.emoji}</div>
+                                                                        <div>
+                                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                <span className={`text-[11px] font-extrabold px-2 py-0.5 rounded-md ${Number(exp.day) === 0 ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                                                    {Number(exp.day) === 0 ? '사전 지출' : `${exp.day}일차`}
+                                                                                </span>
+                                                                                <h4 className="text-sm sm:text-base font-extrabold text-slate-800">{exp.title}</h4>
+                                                                            </div>
+                                                                            <div className="text-xs text-slate-500 mt-0.5">
+                                                                                결제: <b>{payer ? `${payer.avatar} ${payer.name}` : '미지정'}</b> · 정산 {toArray(exp.splitWith).length}명 · {exp.method === 'cash' ? '💵 현금' : '💳 카드'}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div className="flex sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 pt-2.5 sm:pt-0 border-slate-100 gap-2 shrink-0">
+                                                                        <div className="text-right">
+                                                                            <div className="text-sm sm:text-base font-extrabold text-slate-900">{Number(exp.amount).toLocaleString()} {exp.currency}</div>
+                                                                            {exp.currency !== 'KRW' && <div className="text-xs text-slate-400">≈ {krwAmount.toLocaleString()}원</div>}
+                                                                        </div>
+
+                                                                        <div className="flex items-center gap-1.5">
+                                                                            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
+                                                                                <button onClick={(e) => moveExpenseOrder(exp.id, 'top', filteredExpenses, e)} disabled={idx === 0} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">⟪</button>
+                                                                                <button onClick={(e) => moveExpenseOrder(exp.id, 'up', filteredExpenses, e)} disabled={idx === 0} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">∧</button>
+                                                                                <button onClick={(e) => moveExpenseOrder(exp.id, 'down', filteredExpenses, e)} disabled={idx === totalFiltered - 1} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">∨</button>
+                                                                                <button onClick={(e) => moveExpenseOrder(exp.id, 'bottom', filteredExpenses, e)} disabled={idx === totalFiltered - 1} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">⟫</button>
+                                                                            </div>
+                                                                            <button onClick={() => openEditExpenseModal(exp)} className="text-xs font-bold text-slate-600 px-2.5 py-1 rounded-lg border border-slate-200">수정</button>
+                                                                            <button onClick={(e) => handleDeleteExpense(exp, e)} className="text-xs font-bold text-rose-500 px-2 py-1 rounded-lg">삭제</button>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* ==================== 3. 체크 탭 ==================== */}
+                                {activeTab === 'checklist' && (
+                                    <div className="space-y-4">
+                                        {localTimeInfo && (localTimeInfo.voltage || localTimeInfo.emergency) && (
+                                            <div className="bg-white rounded-3xl px-5 py-4 border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-2 text-xs sm:text-sm">
+                                                <div className="flex items-center gap-3 flex-wrap">
+                                                    <span className="font-extrabold text-[#00A878] bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">💡 현지 가이드</span>
+                                                    {localTimeInfo.voltage && <span className="text-slate-600">🔌 <b>전압:</b> {localTimeInfo.voltage}</span>}
+                                                    <span className="text-slate-600">💱 <b>기준 환율:</b> {CURRENCIES[currentTrip.currency]?.unit || 1} {currentTrip.currency} = {B.getEffectiveRate(currentTrip, currentTrip.currency, selectedDay)}원</span>
+                                                </div>
+                                                {localTimeInfo.emergency && (
+                                                    <span className="text-xs text-slate-400 font-semibold">🚨 {localTimeInfo.emergency}</span>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200 shadow-2xs space-y-5">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <div>
+                                                    <h3 className="text-lg font-extrabold text-slate-800">멤버별 준비물 체크리스트</h3>
+                                                    <p className="text-xs text-slate-400">항목 이름을 누르거나 우측 [수정] 버튼으로 오탈자를 언제든 고칠 수 있습니다.</p>
+                                                </div>
+                                                <span className="text-xs font-extrabold text-[#00A878] bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
+                                                    전원 완료 {fullyCompletedCheckCount} / {checklist.length}
+                                                </span>
+                                            </div>
+
+                                            <form
+                                                onSubmit={(e) => {
+                                                    e.preventDefault();
+                                                    if (!newCheckItem.trim()) return;
+                                                    updateCurrentTrip(t => ({
+                                                        ...t,
+                                                        checklist: [...toArray(t.checklist), { id: 'chk_' + Date.now(), text: newCheckItem.trim(), checkedBy: {} }]
+                                                    }));
+                                                    setNewCheckItem('');
+                                                }}
+                                                className="flex gap-2"
+                                            >
+                                                <input type="text" placeholder="새 준비물 입력 (예: 상비약, 멀티어댑터)" value={newCheckItem} onChange={(e) => setNewCheckItem(e.target.value)} className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm" />
+                                                <button type="submit" className="bg-[#00C48C] text-white text-xs sm:text-sm font-extrabold px-5 py-2.5 rounded-xl shrink-0">등록</button>
+                                            </form>
+
+                                            {checklist.length === 0 ? (
+                                                <div className="p-10 text-center text-xs sm:text-sm text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                                                    등록된 준비물이 없습니다.
+                                                </div>
+                                            ) : (
+                                                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white">
+                                                    <div className="overflow-x-auto">
+                                                        <table className="w-full border-collapse text-left min-w-max">
+                                                            <thead>
+                                                                <tr className="bg-slate-50 border-b border-slate-200">
+                                                                    <th className="sticky left-0 z-10 bg-slate-50 py-3 px-4 text-xs sm:text-sm font-extrabold text-slate-700 min-w-[200px] border-r">준비물 항목 (클릭 시 수정)</th>
+                                                                    {companions.map(comp => (
+                                                                        <th key={comp.id} className="py-2.5 px-3 text-center min-w-[90px] border-r">
+                                                                            <div className="text-xs sm:text-sm font-extrabold text-slate-800">{comp.avatar} {comp.name}</div>
+                                                                        </th>
+                                                                    ))}
+                                                                    <th className="py-3 px-3 text-center text-xs font-bold text-slate-400 w-24">관리</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody className="divide-y divide-slate-200">
+                                                                {checklist.map(item => (
+                                                                    <tr key={item.id} className="hover:bg-slate-50/60">
+                                                                        <td
+                                                                            onClick={() => setEditingCheckItem({ id: item.id, text: item.text })}
+                                                                            className="sticky left-0 z-10 py-3.5 px-4 bg-white border-r cursor-pointer hover:text-[#00A878]"
+                                                                        >
+                                                                            <span className="text-xs sm:text-sm font-extrabold text-slate-800 hover:underline">{item.text}</span>
+                                                                        </td>
+                                                                        {companions.map(comp => {
+                                                                            const checked = isItemCheckedByCompanion(item, comp.id);
+                                                                            return (
+                                                                                <td
+                                                                                    key={comp.id}
+                                                                                    onClick={() => {
+                                                                                        updateCurrentTrip(t => ({
+                                                                                            ...t,
+                                                                                            checklist: toArray(t.checklist).map(c => {
+                                                                                                if (c.id !== item.id) return c;
+                                                                                                const prevMap = (c.checkedBy && typeof c.checkedBy === 'object') ? { ...c.checkedBy } : {};
+                                                                                                prevMap[comp.id] = !checked;
+                                                                                                return { ...c, checkedBy: prevMap };
+                                                                                            })
+                                                                                        }));
+                                                                                    }}
+                                                                                    className="py-3 px-3 text-center border-r cursor-pointer select-none"
+                                                                                >
+                                                                                    <button type="button" className={`w-7 h-7 mx-auto rounded-xl flex items-center justify-center text-xs font-black border transition ${checked ? 'bg-[#00C48C] border-[#00C48C] text-white' : 'bg-slate-50 border-slate-200 text-transparent'}`}>✓</button>
+                                                                                </td>
+                                                                            );
+                                                                        })}
+                                                                        <td className="py-3 px-2 text-center whitespace-nowrap space-x-1.5">
+                                                                            <button onClick={() => setEditingCheckItem({ id: item.id, text: item.text })} className="text-xs font-bold text-slate-600 hover:text-[#00A878]">수정</button>
+                                                                            <button
+                                                                                onClick={() => {
+                                                                                    askConfirm({
+                                                                                        title: '준비물 삭제',
+                                                                                        message: `[${item.text}] 항목을 삭제하시겠습니까?`,
+                                                                                        onConfirm: () => {
+                                                                                            updateCurrentTrip(t => ({ ...t, checklist: toArray(t.checklist).filter(c => c.id !== item.id) }));
+                                                                                        }
+                                                                                    });
+                                                                                }}
+                                                                                className="text-xs font-bold text-rose-500"
+                                                                            >
+                                                                                삭제
+                                                                            </button>
+                                                                        </td>
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </main>
+                        </>
+                    )}
+
+                    {/* ==================== 분리된 모달 컴포넌트 마운트 ==================== */}
+                    <M.SecurityCheckModal
+                        modalState={securityCheckModal}
+                        setModalState={setSecurityCheckModal}
+                        onVerify={handleVerifySecurityPin}
+                    />
+
+                    <M.EditCheckItemModal
+                        editingCheckItem={editingCheckItem}
+                        setEditingCheckItem={setEditingCheckItem}
+                        onSave={(id, nextText) => {
+                            updateCurrentTrip(t => ({
+                                ...t,
+                                checklist: toArray(t.checklist).map(c => c.id === id ? { ...c, text: nextText } : c)
+                            }));
+                            setEditingCheckItem(null);
+                            showToast('✏️ 준비물 항목이 수정되었습니다.');
+                        }}
+                    />
+
+                    <M.ConfirmDialogModal
+                        confirmDialog={confirmDialog}
+                        setConfirmDialog={setConfirmDialog}
+                    />
+
+                    <M.LoginModal
+                        isOpen={isLoginModalOpen}
+                        currentProfile={currentProfile}
+                        appVersion={APP_VERSION}
+                        registeredProfiles={registeredProfiles}
+                        isProfilesLoaded={isProfilesLoaded}
+                        loginForm={loginForm}
+                        setLoginForm={setLoginForm}
+                        isSubmitting={isAuthSubmitting}
+                        onClose={() => setIsLoginModalOpen(false)}
+                        onSubmit={handleLoginSubmit}
+                    />
+
+                    <M.EditMyProfileModal
+                        isOpen={isEditMyProfileOpen}
+                        currentProfile={currentProfile}
+                        form={editMyProfileForm}
+                        setForm={setEditMyProfileForm}
+                        onClose={() => setIsEditMyProfileOpen(false)}
+                        onSubmit={handleSaveMyProfile}
+                    />
+
+                    <M.UserManageModal
+                        isOpen={isUserManageModalOpen}
+                        isAdmin={isAdmin}
+                        activeUserKey={activeUserKey}
+                        registeredProfiles={registeredProfiles}
+                        onClose={() => setIsUserManageModalOpen(false)}
+                        onToggleAdmin={(uKey, prof) => {
+                            const nextAdmin = !prof.isAdmin;
+                            persistProfile(uKey, { ...prof, isAdmin: nextAdmin });
+                            showToast(nextAdmin ? `👑 '${prof.name}' 님에게 관리자 권한을 부여했습니다.` : `'${prof.name}' 님의 관리자 권한을 해제했습니다.`);
+                        }}
+                        onResetPassword={async (uKey, prof, rawPin) => {
+                            if (!rawPin || rawPin.trim().length < 4) {
+                                showToast('비밀번호는 4자리 이상이어야 합니다.');
+                                return false;
+                            }
+                            try {
+                                await API.updateUserPassword(uKey, rawPin.trim(), prof);
+                                showToast('🛡️ 비밀번호가 무유출 보안 방식으로 변경되었습니다.');
+                                return true;
+                            } catch (e) {
+                                showToast('❌ 비밀번호 변경에 실패했습니다.');
+                                return false;
+                            }
+                        }}
+                        onDeleteUser={(uKey, prof) => {
+                            askConfirm({
+                                title: '사용자 계정 삭제',
+                                message: `'${prof.name}' 계정을 영구 삭제하시겠습니까?`,
+                                onConfirm: () => {
+                                    API.deleteProfile(uKey);
+                                    showToast('계정이 삭제되었습니다.');
+                                }
+                            });
+                        }}
+                    />
+
+                    <M.MemberModal
+                        isOpen={isMemberModalOpen}
+                        currentTrip={currentTrip}
+                        companions={companions}
+                        registeredProfiles={registeredProfiles}
+                        activeUserKey={activeUserKey}
+                        isOwnerOrAdmin={isCurrentTripOwnerOrAdmin}
+                        onClose={() => setIsMemberModalOpen(false)}
+                        onChangeVisibility={(v) => updateCurrentTrip({ visibility: v })}
+                        onInviteUser={handleInviteRegisteredUser}
+                        onAddManualCompanion={(name) => {
+                            const newComp = { id: 'c_' + Date.now(), name, avatar: '🧳', color: 'bg-indigo-500' };
+                            updateCurrentTrip(t => ({ ...t, companions: [...toArray(t.companions), newComp] }));
+                        }}
+                        onKickCompanion={(comp) => {
+                            const compKey = U.sanitizeKey(comp.userKey || comp.name);
+                            askConfirm({
+                                title: '멤버 퇴출 확인',
+                                message: `'${comp.name}' 님을 멤버에서 제외하시겠습니까?`,
+                                confirmText: '퇴출하기',
+                                onConfirm: () => {
+                                    updateCurrentTrip(t => ({ ...t, companions: toArray(t.companions).filter(c => c.id !== comp.id) }));
+                                    const targetProf = registeredProfiles[compKey];
+                                    if (targetProf && Array.isArray(targetProf.joinedTripIds)) {
+                                        persistProfile(compKey, {
+                                            ...targetProf,
+                                            joinedTripIds: targetProf.joinedTripIds.filter(id => id !== currentTrip.id)
+                                        });
+                                    }
+                                    showToast(`'${comp.name}' 님이 멤버에서 제외되었습니다.`);
+                                }
+                            });
+                        }}
+                        onLeaveTrip={() => handleDeleteTrip(currentTrip)}
+                    />
+
+                    <M.PlaceModal
+                        isOpen={isPlaceModalOpen}
+                        currentTrip={currentTrip}
+                        tripDays={tripDays}
+                        editingPlaceInfo={editingPlaceInfo}
+                        newPlace={newPlace}
+                        setNewPlace={setNewPlace}
+                        isSearchingAddress={isSearchingAddress}
+                        addressSearchResults={addressSearchResults}
+                        setAddressSearchResults={setAddressSearchResults}
+                        onSearchAddress={handleSearchAddress}
+                        onClose={() => setIsPlaceModalOpen(false)}
+                        onSubmit={handleSavePlace}
+                    />
+
+                    <M.ExpenseModal
+                        isOpen={isExpenseModalOpen}
+                        currentTrip={currentTrip}
+                        tripDays={tripDays}
+                        companions={companions}
+                        editingExpenseId={editingExpenseId}
+                        newExpense={newExpense}
+                        setNewExpense={setNewExpense}
+                        onClose={() => setIsExpenseModalOpen(false)}
+                        onSubmit={handleSaveExpense}
+                    />
+
+                    <M.NewTripModal
+                        isOpen={isNewTripModalOpen}
+                        form={newTripForm}
+                        setForm={setNewTripForm}
+                        registeredProfiles={registeredProfiles}
+                        activeUserKey={activeUserKey}
+                        onClose={() => setIsNewTripModalOpen(false)}
+                        onSubmit={handleCreateNewTrip}
+                    />
+
+                    <M.EditTripModal
+                        isOpen={isEditTripOpen}
+                        currentTrip={currentTrip}
+                        form={editTripForm}
+                        setForm={setEditTripForm}
+                        onClose={() => setIsEditTripOpen(false)}
+                        onSubmit={handleSaveEditTrip}
+                    />
+
+                    <M.RateModal
+                        isOpen={isRateModalOpen}
+                        currentTrip={currentTrip}
+                        tripDays={tripDays}
+                        onClose={() => setIsRateModalOpen(false)}
+                        onUpdateBaseRate={(code, val) => {
+                            updateCurrentTrip(t => ({ ...t, baseRates: { ...(t.baseRates || {}), [code]: val } }));
+                        }}
+                        onUpdateDailyRate={(dayNum, currency, rawVal) => {
+                            updateCurrentTrip(t => {
+                                const nextDaily = { ...(t.dailyRates || {}) };
+                                const dayObj = { ...(nextDaily[dayNum] || {}) };
+                                if (rawVal === '' || Number(rawVal) <= 0) delete dayObj[currency];
+                                else dayObj[currency] = Number(rawVal);
+                                nextDaily[dayNum] = dayObj;
+                                return { ...t, dailyRates: nextDaily };
+                            });
+                        }}
+                    />
+
+                    <M.SettlementModal
+                        isOpen={isSettlementModalOpen}
+                        currentTrip={currentTrip}
+                        companions={companions}
+                        budgetSummary={budgetSummary}
+                        onClose={() => setIsSettlementModalOpen(false)}
+                        onQuickSettle={handleQuickSettle}
+                        onAddManualSettlement={handleAddManualSettlement}
+                        onDeleteSettlement={handleDeleteSettlement}
+                    />
+
+                    <M.ShareModal
+                        isOpen={isShareModalOpen}
+                        currentTrip={currentTrip}
+                        shareText={shareSummaryText}
+                        onClose={() => setIsShareModalOpen(false)}
+                        onCopy={(txt) => handleCopyText(txt, '공유 텍스트가 복사되었습니다!')}
+                    />
+
+                    <M.TripListModal
+                        isOpen={isTripListModalOpen}
+                        currentTrip={currentTrip}
+                        allVisibleTrips={allVisibleTrips}
+                        visiblePrivateTrips={visiblePrivateTrips}
+                        visibleSharedTrips={visibleSharedTrips}
+                        isAdmin={isAdmin}
+                        activeUserKey={activeUserKey}
+                        onClose={() => setIsTripListModalOpen(false)}
+                        onSelectTrip={handleSelectTrip}
+                        onDeleteTrip={handleDeleteTrip}
+                        onOpenJoinCode={() => setIsJoinCodeModalOpen(true)}
+                        onOpenNewTrip={() => setIsNewTripModalOpen(true)}
+                    />
+
+                    <M.JoinCodeModal
+                        isOpen={isJoinCodeModalOpen}
+                        digits={joinCodeDigits}
+                        setDigits={setJoinCodeDigits}
+                        onClose={() => setIsJoinCodeModalOpen(false)}
+                        onSubmit={handleJoinByCode}
+                    />
+                </div>
+            );
+        }
+
+        // 외부 modals.jsx 트랜스파일 완료 보장 후 안전하게 렌더링
+        function mountApp(retries = 0) {
+            if (window.TripfullModals || retries >= 30) {
+                const root = ReactDOM.createRoot(document.getElementById('root'));
+                root.render(
+                    <ErrorBoundary>
+                        <App />
+                    </ErrorBoundary>
+                );
+            } else {
+                setTimeout(() => mountApp(retries + 1), 100);
+            }
+        }
+        mountApp();
+    </script>
+</body>
+</html>
