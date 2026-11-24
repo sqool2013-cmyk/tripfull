@@ -1,0 +1,216 @@
+{
+"schemaVersion": "0.2.0",
+"daysKr": ["일", "월", "화", "수", "목", "금", "토"],
+"avatarOptions": [
+"✈️", "🧳", "🗺️", "📸", "🏖️", "⛰️",
+"🍜", "☕", "🛍️", "🕶️", "⛺", "🌟"
+],
+"categoryMeta": {
+"sightseeing": {
+"label": "관광",
+"emoji": "🎡",
+"color": "text-emerald-700 bg-emerald-50 border-emerald-200"
+},
+"food": {
+"label": "식당/카페",
+"emoji": "🍽️",
+"color": "text-orange-700 bg-orange-50 border-orange-200"
+},
+"shopping": {
+"label": "쇼핑",
+"emoji": "🛍️",
+"color": "text-pink-700 bg-pink-50 border-pink-200"
+},
+"transport": {
+"label": "교통/항공",
+"emoji": "✈️",
+"color": "text-sky-700 bg-sky-50 border-sky-200"
+},
+"hotel": {
+"label": "숙소",
+"emoji": "🏨",
+"color": "text-purple-700 bg-purple-50 border-purple-200"
+},
+"etc": {
+"label": "기타",
+"emoji": "📌",
+"color": "text-slate-700 bg-slate-100 border-slate-200"
+}
+},
+"currencies": {
+"KRW": { "symbol": "₩", "name": "대한민국 원 (KRW)", "unit": 1, "defaultRate": 1 },
+"JPY": { "symbol": "¥", "name": "일본 엔 (JPY)", "unit": 100, "defaultRate": 905 },
+"USD": { "symbol": "", "name": "미국 달러 (USD)", "unit": 1, "defaultRate": 1380 },
+￼
+￼
+"TWD": { "symbol": "NT", "name": "대만 달러 (TWD)", "unit": 1, "defaultRate": 43 },
+"THB": { "symbol": "฿", "name": "태국 바트 (THB)", "unit": 1, "defaultRate": 40 },
+"CNY": { "symbol": "¥", "name": "중국 위안 (CNY)", "unit": 1, "defaultRate": 192 },
+"SGD": { "symbol": "S$", "name": "싱가포르 달러 (SGD)", "unit": 1, "defaultRate": 1030 },
+"AUD": { "symbol": "A$", "name": "호주 달러 (AUD)", "unit": 1, "defaultRate": 910 },
+"HKD": { "symbol": "HK$", "name": "홍콩 달러 (HKD)", "unit": 1, "defaultRate": 178 },
+"GBP": { "symbol": "£", "name": "영국 파운드 (GBP)", "unit": 1, "defaultRate": 1750 }
+},
+"countryPresets": {
+"대한민국": {
+"cities": [
+"서울", "제주", "부산", "전남광주(광주·여수·순천·담양)",
+"인천(영종·제물포·송도)", "강릉/속초", "경주", "전주", "대전/세종", "대구"
+],
+"currency": "KRW",
+"tzOffset": 9,
+"tzDiffLabel": "한국 표준시 (KST)",
+"voltage": "220V (60Hz)",
+"emergency": "경찰 112 / 구급 119",
+"presets": [
+"신분증 및 모바일 운전면허증",
+"숙소 및 KTX·항공편 예약 확인",
+"개인 세면도구 및 충전기"
+]
+},
+"일본": {
+"cities": ["도쿄", "오사카", "후쿠오카", "삿포로", "교토", "나고야", "오키나와", "마쓰야마"],
+"currency": "JPY",
+"tzOffset": 9,
+"tzDiffLabel": "시차 없음",
+"voltage": "110V (돼지코 11자형 필요)",
+"emergency": "경찰 110 / 구급 119 / 영사콜 +82-2-3210-0404",
+"presets": [
+"비짓재팬웹(Visit Japan Web) QR 등록",
+"110V 돼지코 어댑터",
+"동전지갑 및 트래블카드"
+]
+},
+"베트남": {
+"cities": ["하노이", "다낭", "호치민", "나트랑", "푸꾸옥", "달랏", "호이안"],
+"currency": "VND",
+"tzOffset": 7,
+"tzDiffLabel": "한국보다 2시간 느림 (-2h)",
+"voltage": "220V (한국 플러그 호환)",
+"emergency": "경찰 113 / 구급 115 / 영사콜 +82-2-3210-0404",
+"presets": [
+"그랩(Grab) 앱 설치 및 카드 등록",
+"동 지갑 (화폐 단위 구분용)",
+"샤워기 필터 및 상비약"
+]
+},
+"태국": {
+"cities": ["방콕", "푸켓", "치앙마이", "파타야", "코사무이"],
+"currency": "THB",
+"tzOffset": 7,
+"tzDiffLabel": "한국보다 2시간 느림 (-2h)",
+"voltage": "220V (한국 플러그 호환)",
+"emergency": "관광경찰 1155 / 구급 1669",
+"presets": [
+"트래블월렛 / GLN 결제 준비",
+"모기 기피제 및 선글라스",
+"사원 방문용 복장"
+]
+},
+"대만": {
+"cities": ["타이베이", "가오슝", "타이중", "타이난", "화롄"],
+"currency": "TWD",
+"tzOffset": 8,
+"tzDiffLabel": "한국보다 1시간 느림 (-1h)",
+"voltage": "110V (돼지코 11자형 필요)",
+"emergency": "경찰 110 / 구급 119",
+"presets": [
+"온라인 입국신고서 작성",
+"이지카드(EasyCard) 및 110V 돼지코",
+"우산 및 일회용 우비"
+]
+},
+"미국": {
+"cities": ["워싱턴 D.C.", "뉴욕", "로스앤젤레스", "하와이(호놀룰루)", "샌프란시스코", "라스베이거스", "괌"],
+"currency": "USD",
+"tzOffset": -5,
+"tzDiffLabel": "한국보다 14~19시간 느림",
+"voltage": "120V (돼지코 11자형 필요)",
+"emergency": "통합 긴급전화 911",
+"presets": [
+"ESTA 전자여행허가 승인 확인",
+"팁(Tip)용 소액 달러 현금",
+"120V 멀티 어댑터"
+]
+},
+"유럽": {
+"cities": ["파리", "런던", "로마", "바르셀로나", "인터라켄/취리히", "프라하", "비엔나"],
+"currency": "EUR",
+"tzOffset": 1,
+"tzDiffLabel": "한국보다 7~8시간 느림",
+"voltage": "220~230V (영국·스위스는 멀티어댑터 필수)",
+"emergency": "유럽 통합 긴급전화 112",
+"presets": [
+"소매치기 방지 목걸이 지갑/스트랩",
+"유레일 패스 / 기차표 예매 확인",
+"유럽형 멀티 어댑터"
+]
+},
+"중국/홍콩": {
+"cities": ["베이징", "상하이", "홍콩", "마카오", "칭다오", "장가계"],
+"currency": "CNY",
+"tzOffset": 8,
+"tzDiffLabel": "한국보다 1시간 느림 (-1h)",
+"voltage": "220V (홍콩·마카오는 영국식 3구 어댑터 필요)",
+"emergency": "경찰 110 / 홍콩 긴급 999",
+"presets": [
+"알리페이 / 위챗페이 카드 연동",
+"고덕지도 앱 및 로밍/eSIM",
+"멀티 어댑터"
+]
+},
+"싱가포르": {
+"cities": ["싱가포르"],
+"currency": "SGD",
+"tzOffset": 8,
+"tzDiffLabel": "한국보다 1시간 느림 (-1h)",
+"voltage": "230V (영국식 3구 멀티 어댑터 필요)",
+"emergency": "경찰 999 / 구급 995",
+"presets": [
+"SG 입국카드(SGAC) 온라인 작성",
+"영국식 3구 멀티 어댑터",
+"컨택리스 교통카드 및 우산"
+]
+},
+"호주": {
+"cities": ["캔버라", "시드니", "멜버른", "브리즈번/골드코스트"],
+"currency": "AUD",
+"tzOffset": 10,
+"tzDiffLabel": "한국보다 1시간 빠름 (+1h)",
+"voltage": "230V (호주식 삼각 어댑터 필요)",
+"emergency": "통합 긴급전화 000",
+"presets": [
+"호주 ETA 전자비자 앱 승인 확인",
+"호주식 삼각 멀티 어댑터",
+"선크림 및 선글라스"
+]
+},
+"직접 입력": {
+"cities": ["직접 입력"],
+"currency": "USD",
+"tzOffset": null,
+"tzDiffLabel": "",
+"voltage": "",
+"emergency": "영사콜센터 +82-2-3210-0404",
+"presets": [
+"여권 및 항공권 E-티켓 확인",
+"트래블 카드 및 현지 화폐 환전",
+"로밍 / 유심 / eSIM 준비"
+]
+}
+},
+"addressRules": {
+"stripCountries": [
+"대한민국", "한국", "일본", "미국", "베트남", "태국",
+"대만", "싱가포르", "호주", "South Korea", "Japan", "USA"
+],
+"jeonnamGwangjuAliases": ["전라남도", "광주광역시", "광주시", "전남"],
+"incheonYeongjongKeywords": [
+"운서", "영종", "중산", "운북", "운남", "남북",
+"을왕", "덕교", "무의", "공항대로", "제2터미널대로"
+],
+"incheonGeomdanKeywords": [
+"검단", "당하", "원당", "마전", "불로", "대곡", "오류", "왕길", "아라"
+]
+}
+}
