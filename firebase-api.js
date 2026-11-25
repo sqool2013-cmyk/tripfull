@@ -1,43 +1,19 @@
 /**
  * ============================================================================
- * Tripfull v0.2.0 - Firebase Realtime Database & 무유출 인증 모듈 (firebase-api.js)
+ * Tripfull v0.2.1 - Firebase Realtime Database & 무유출·익명 인증 모듈 (firebase-api.js)
  * ============================================================================
  * 역할:
  *  1. Firebase App / Auth / Realtime Database 초기화 (neit-pc-default-rtdb)
- *  2. 최상위 디렉토리 'tripfull/' 하위 profiles, trips 실시간 구독 및 CRUD
- *  3. 무유출(Zero-Download) 해시 경로 인증:
+ *  2. Google Sites iframe · iOS Safari · 학교 태블릿 완벽 호환을 위한
+ *     메모리 전용(Persistence.NONE) 익명 인증 자동 대기(ensureAuthReady)
+ *  3. 최상위 디렉토리 'tripfull/' 하위 profiles, trips 실시간 구독 및 CRUD
+ *  4. 무유출(Zero-Download) 해시 경로 인증:
  *     - 비밀번호 해시를 공개 프로필(tripfull/profiles)에서 완전히 분리
  *     - tripfull/secrets/{userKey}/{safeHashKey} 경로 일치 여부만 조회하여
  *       틀린 비밀번호 입력 시 정답 해시값이 브라우저로 단 1바이트도 내려오지 않음
- *  4. 구버전 계정(pin 또는 pinHash 보유) 로그인 시 무유출 구조로 자동 무중단 이관
- *  5. authVersion 기반 세션 무결성 관리 (비번 변경/계정 삭제 시 타 기기 자동 로그아웃)
+ *  5. 구버전 계정(pin 또는 pinHash 보유) 로그인 시 무유출 구조로 자동 무중단 이관
+ *  6. authVersion 기반 세션 무결성 관리 (비번 변경/계정 삭제 시 타 기기 자동 로그아웃)
  *
- * ----------------------------------------------------------------------------
- * [권장 Firebase Realtime Database 보안 규칙 (기존 sakura 규칙 100% 유지)]
- * Firebase 콘솔 -> Realtime Database -> 규칙 탭에서 "tripfull" 블록만 아래처럼 교체하세요:
- *
- *   "tripfull": {
- *     "profiles": {
- *       ".read": true,
- *       ".write": true
- *     },
- *     "trips": {
- *       ".read": true,
- *       ".write": true
- *     },
- *     "secrets": {
- *       ".read": false,
- *       "$userKey": {
- *         ".read": false,
- *         ".write": true,
- *         "$hashKey": {
- *           ".read": true,
- *           ".write": true
- *         }
- *       }
- *     }
- *   }
- * ----------------------------------------------------------------------------
  * 의존성: firebase-app-compat, firebase-auth-compat, firebase-database-compat,
  *         window.TripfullUtils (utils.js)
  * 전역 노출: window.TripfullAPI
@@ -64,6 +40,7 @@
     let authInstance = null;
     let rtdbInstance = null;
     let isInitialized = false;
+    let authReadyPromise = null;
 
     /**
      * TripfullUtils 참조 헬퍼
@@ -77,7 +54,6 @@
 
     /**
      * Firebase 앱 및 Realtime Database 인스턴스를 초기화합니다.
-     * 익명 인증은 백그라운드에서 비차단으로 시도하며, 실패해도 RTDB 연결은 유지됩니다.
      */
     function init() {
         if (isInitialized && rtdbInstance) {
@@ -94,9 +70,10 @@
             rtdbInstance = global.firebase.database();
             isInitialized = true;
 
-            if (authInstance && typeof authInstance.signInAnonymously === 'function') {
-                authInstance.signInAnonymously().catch(function () {
-                    // 프로젝트에서 익명 인증이 꺼져 있어도 RTDB는 정상 동작하도록 무시
+            // 앱 시작 시 백그라운드에서 익명 출입증 발급을 즉시 선행 시작
+            if (authInstance) {
+                ensureAuthReady().catch(function () {
+                    // 각 요청 시 재시도하므로 초기화 단계에서는 비차단 처리
                 });
             }
             return { auth: authInstance, rtdb: rtdbInstance };
@@ -104,6 +81,47 @@
             console.error('[TripfullAPI] Firebase 초기화 실패:', err);
             throw err;
         }
+    }
+
+    /**
+     * 구글 사이트 iframe·iOS Safari·공용 태블릿에서도 스토리지 차단 오류 없이
+     * 동작하도록 메모리 전용(Persistence.NONE) 익명 출입증을 발급받고 대기합니다.
+     * @returns {Promise<object|null>} 인증된 Firebase User 객체
+     */
+    function ensureAuthReady() {
+        if (!isInitialized) init();
+        if (!authInstance) return Promise.resolve(null);
+        if (authInstance.currentUser) return Promise.resolve(authInstance.currentUser);
+        if (authReadyPromise) return authReadyPromise;
+
+        authReadyPromise = (async function () {
+            try {
+                if (
+                    global.firebase &&
+                    global.firebase.auth &&
+                    global.firebase.auth.Auth &&
+                    global.firebase.auth.Auth.Persistence &&
+                    typeof authInstance.setPersistence === 'function'
+                ) {
+                    await authInstance.setPersistence(global.firebase.auth.Auth.Persistence.NONE);
+                }
+            } catch (pErr) {
+                console.warn('[TripfullAPI] Persistence.NONE 설정 건너뜀:', pErr);
+            }
+
+            try {
+                if (authInstance.currentUser) return authInstance.currentUser;
+                const cred = await authInstance.signInAnonymously();
+                return (cred && cred.user) || authInstance.currentUser || null;
+            } catch (authErr) {
+                console.error('[TripfullAPI] 익명 인증 발급 실패:', authErr);
+                // 일시적 네트워크 오류 시 다음 호출에서 재시도 가능하도록 초기화
+                authReadyPromise = null;
+                throw authErr;
+            }
+        })();
+
+        return authReadyPromise;
     }
 
     /**
@@ -173,11 +191,13 @@
 
     /**
      * 전체 사용자 프로필 목록(tripfull/profiles)을 실시간 구독합니다.
+     * 익명 출입증 발급이 완료된 후 구독을 시작하여 권한 오류를 방지합니다.
      * @returns {function} 구독 해제(unsubscribe) 함수
      */
     function subscribeProfiles(onData, onError) {
         const rtdb = getRtdb();
         const ref = rtdb.ref(DB_ROOT + '/profiles');
+        let isUnsubscribed = false;
 
         const handler = function (snapshot) {
             const val = snapshot.val() || {};
@@ -189,19 +209,28 @@
             if (typeof onError === 'function') onError(err);
         };
 
-        ref.on('value', handler, errHandler);
+        ensureAuthReady()
+            .then(function () {
+                if (isUnsubscribed) return;
+                ref.on('value', handler, errHandler);
+            })
+            .catch(errHandler);
+
         return function unsubscribe() {
+            isUnsubscribed = true;
             ref.off('value', handler);
         };
     }
 
     /**
      * 전체 여행 목록(tripfull/trips)을 실시간 구독합니다.
+     * 익명 출입증 발급이 완료된 후 구독을 시작하여 권한 오류를 방지합니다.
      * @returns {function} 구독 해제(unsubscribe) 함수
      */
     function subscribeTrips(onData, onError) {
         const rtdb = getRtdb();
         const ref = rtdb.ref(DB_ROOT + '/trips');
+        let isUnsubscribed = false;
 
         const handler = function (snapshot) {
             const val = snapshot.val() || {};
@@ -212,8 +241,15 @@
             if (typeof onError === 'function') onError(err);
         };
 
-        ref.on('value', handler, errHandler);
+        ensureAuthReady()
+            .then(function () {
+                if (isUnsubscribed) return;
+                ref.on('value', handler, errHandler);
+            })
+            .catch(errHandler);
+
         return function unsubscribe() {
+            isUnsubscribed = true;
             ref.off('value', handler);
         };
     }
@@ -228,6 +264,7 @@
      * @returns {Promise<{authVersion: number, safeKey: string}>}
      */
     async function setUserSecret(userKey, plainPin) {
+        await ensureAuthReady();
         const utils = getUtils();
         const rtdb = getRtdb();
         const cleanKey = utils.sanitizeKey(userKey);
@@ -257,6 +294,7 @@
      * @returns {Promise<{ok: boolean, migrated: boolean, authVersion: number|null, cleanedProfile?: object}>}
      */
     async function verifyUserSecret(userKey, plainPin, profileObj) {
+        await ensureAuthReady();
         const utils = getUtils();
         const rtdb = getRtdb();
         const cleanKey = utils.sanitizeKey(userKey || (profileObj && (profileObj.key || profileObj.name)));
@@ -342,6 +380,7 @@
      * 사용자 프로필을 tripfull/profiles/{userKey}에 저장합니다.
      */
     async function saveProfile(userKey, profileObj) {
+        await ensureAuthReady();
         const utils = getUtils();
         const rtdb = getRtdb();
         const cleanKey = utils.sanitizeKey(userKey);
@@ -409,6 +448,7 @@
      * 사용자 계정의 프로필과 비밀 해시 노드를 모두 영구 삭제합니다.
      */
     async function deleteProfile(userKey) {
+        await ensureAuthReady();
         const utils = getUtils();
         const rtdb = getRtdb();
         const cleanKey = utils.sanitizeKey(userKey);
@@ -424,6 +464,7 @@
      * 여행 데이터 전체를 tripfull/trips/{tripId}에 저장합니다.
      */
     async function saveTrip(tripObj) {
+        await ensureAuthReady();
         if (!tripObj || !tripObj.id) return null;
         const rtdb = getRtdb();
         const payload = Object.assign({}, tripObj, { updatedAt: Date.now() });
@@ -435,6 +476,7 @@
      * 특정 여행을 tripfull/trips/{tripId}에서 영구 삭제합니다.
      */
     async function deleteTrip(tripId) {
+        await ensureAuthReady();
         if (!tripId) return;
         const rtdb = getRtdb();
         await rtdb.ref(DB_ROOT + '/trips/' + tripId).remove();
@@ -444,6 +486,7 @@
     global.TripfullAPI = {
         DB_ROOT: DB_ROOT,
         init: init,
+        ensureAuthReady: ensureAuthReady,
         getRtdb: getRtdb,
         getCachedProfiles: getCachedProfiles,
         saveCachedProfiles: saveCachedProfiles,
