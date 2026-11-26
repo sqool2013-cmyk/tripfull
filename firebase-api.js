@@ -1,18 +1,17 @@
 /**
  * ============================================================================
- * Tripfull v0.2.1 - Firebase Realtime Database & 무유출·익명 인증 모듈 (firebase-api.js)
+ * Tripfull v0.2.2 - Firebase RTDB · 무유출 인증 · 영수증 지연 로딩 모듈 (firebase-api.js)
  * ============================================================================
  * 역할:
  *  1. Firebase App / Auth / Realtime Database 초기화 (neit-pc-default-rtdb)
  *  2. Google Sites iframe · iOS Safari · 학교 태블릿 완벽 호환을 위한
  *     메모리 전용(Persistence.NONE) 익명 인증 자동 대기(ensureAuthReady)
  *  3. 최상위 디렉토리 'tripfull/' 하위 profiles, trips 실시간 구독 및 CRUD
- *  4. 무유출(Zero-Download) 해시 경로 인증:
- *     - 비밀번호 해시를 공개 프로필(tripfull/profiles)에서 완전히 분리
- *     - tripfull/secrets/{userKey}/{safeHashKey} 경로 일치 여부만 조회하여
- *       틀린 비밀번호 입력 시 정답 해시값이 브라우저로 단 1바이트도 내려오지 않음
- *  5. 구버전 계정(pin 또는 pinHash 보유) 로그인 시 무유출 구조로 자동 무중단 이관
- *  6. authVersion 기반 세션 무결성 관리 (비번 변경/계정 삭제 시 타 기기 자동 로그아웃)
+ *  4. 무유출(Zero-Download) 해시 경로 인증 (tripfull/secrets/{userKey}/{safeHashKey})
+ *  5. [v0.2.2 신규] 가계부 영수증 이미지 분리 저장 및 지연 로딩:
+ *     - 경로: tripfull/receipts/{tripId}/{expenseId}
+ *     - 여행 데이터(trips)의 용량 증가 없이, 사용자가 영수증 보기를 눌렀을 때만 단건 조회
+ *     - 지출 삭제 또는 여행 삭제 시 연결된 영수증 데이터도 함께 정리
  *
  * 의존성: firebase-app-compat, firebase-auth-compat, firebase-database-compat,
  *         window.TripfullUtils (utils.js)
@@ -42,9 +41,6 @@
     let isInitialized = false;
     let authReadyPromise = null;
 
-    /**
-     * TripfullUtils 참조 헬퍼
-     */
     function getUtils() {
         if (!global.TripfullUtils) {
             throw new Error('[TripfullAPI] utils.js가 먼저 로드되어야 합니다.');
@@ -52,9 +48,6 @@
         return global.TripfullUtils;
     }
 
-    /**
-     * Firebase 앱 및 Realtime Database 인스턴스를 초기화합니다.
-     */
     function init() {
         if (isInitialized && rtdbInstance) {
             return { auth: authInstance, rtdb: rtdbInstance };
@@ -70,11 +63,8 @@
             rtdbInstance = global.firebase.database();
             isInitialized = true;
 
-            // 앱 시작 시 백그라운드에서 익명 출입증 발급을 즉시 선행 시작
             if (authInstance) {
-                ensureAuthReady().catch(function () {
-                    // 각 요청 시 재시도하므로 초기화 단계에서는 비차단 처리
-                });
+                ensureAuthReady().catch(function () {});
             }
             return { auth: authInstance, rtdb: rtdbInstance };
         } catch (err) {
@@ -83,11 +73,6 @@
         }
     }
 
-    /**
-     * 구글 사이트 iframe·iOS Safari·공용 태블릿에서도 스토리지 차단 오류 없이
-     * 동작하도록 메모리 전용(Persistence.NONE) 익명 출입증을 발급받고 대기합니다.
-     * @returns {Promise<object|null>} 인증된 Firebase User 객체
-     */
     function ensureAuthReady() {
         if (!isInitialized) init();
         if (!authInstance) return Promise.resolve(null);
@@ -115,7 +100,6 @@
                 return (cred && cred.user) || authInstance.currentUser || null;
             } catch (authErr) {
                 console.error('[TripfullAPI] 익명 인증 발급 실패:', authErr);
-                // 일시적 네트워크 오류 시 다음 호출에서 재시도 가능하도록 초기화
                 authReadyPromise = null;
                 throw authErr;
             }
@@ -124,9 +108,6 @@
         return authReadyPromise;
     }
 
-    /**
-     * 초기화된 RTDB 인스턴스를 반환합니다.
-     */
     function getRtdb() {
         if (!rtdbInstance) init();
         return rtdbInstance;
@@ -149,9 +130,7 @@
     function saveCachedProfiles(profilesMap) {
         try {
             global.localStorage.setItem(CACHE_PROFILES, JSON.stringify(profilesMap || {}));
-        } catch (e) {
-            // iframe 스토리지 차단 환경 무시
-        }
+        } catch (e) {}
     }
 
     function getCachedUser() {
@@ -169,14 +148,11 @@
                 global.localStorage.removeItem(CACHE_USER);
                 return;
             }
-            // 로컬 캐시에도 평문 pin이나 pinHash는 절대 저장하지 않음
             const cleanCopy = Object.assign({}, userObj);
             delete cleanCopy.pin;
             delete cleanCopy.pinHash;
             global.localStorage.setItem(CACHE_USER, JSON.stringify(cleanCopy));
-        } catch (e) {
-            // iframe 스토리지 차단 환경 무시
-        }
+        } catch (e) {}
     }
 
     function clearCachedUser() {
@@ -189,11 +165,6 @@
     // 2. 실시간 구독 (tripfull/profiles, tripfull/trips)
     // ========================================================================
 
-    /**
-     * 전체 사용자 프로필 목록(tripfull/profiles)을 실시간 구독합니다.
-     * 익명 출입증 발급이 완료된 후 구독을 시작하여 권한 오류를 방지합니다.
-     * @returns {function} 구독 해제(unsubscribe) 함수
-     */
     function subscribeProfiles(onData, onError) {
         const rtdb = getRtdb();
         const ref = rtdb.ref(DB_ROOT + '/profiles');
@@ -222,11 +193,6 @@
         };
     }
 
-    /**
-     * 전체 여행 목록(tripfull/trips)을 실시간 구독합니다.
-     * 익명 출입증 발급이 완료된 후 구독을 시작하여 권한 오류를 방지합니다.
-     * @returns {function} 구독 해제(unsubscribe) 함수
-     */
     function subscribeTrips(onData, onError) {
         const rtdb = getRtdb();
         const ref = rtdb.ref(DB_ROOT + '/trips');
@@ -258,11 +224,6 @@
     // 3. 무유출(Zero-Download) 비밀번호 저장 · 검증 · 자동 마이그레이션
     // ========================================================================
 
-    /**
-     * 사용자의 새 비밀번호를 무유출 보안 경로(tripfull/secrets/{userKey}/{safeHashKey})에 저장합니다.
-     * 기존에 등록되어 있던 이전 해시 경로는 덮어쓰기(set)로 즉시 무효화됩니다.
-     * @returns {Promise<{authVersion: number, safeKey: string}>}
-     */
     async function setUserSecret(userKey, plainPin) {
         await ensureAuthReady();
         const utils = getUtils();
@@ -284,15 +245,6 @@
         return { authVersion: now, safeKey: safeKey };
     }
 
-    /**
-     * 비밀번호 일치 여부를 검증합니다.
-     * 1단계: 무유출 보안 경로(tripfull/secrets/{userKey}/{safeHashKey}) 직접 매칭 조회
-     *        -> 틀린 비밀번호 입력 시 서버에서 null만 반환되며 정답 해시는 절대 다운로드되지 않음
-     * 2단계: 구버전 계정(프로필에 pin 또는 pinHash 잔존)일 경우 호환 검증 후
-     *        자동으로 tripfull/secrets로 이관하고 공개 프로필에서 pin/pinHash를 영구 삭제
-     *
-     * @returns {Promise<{ok: boolean, migrated: boolean, authVersion: number|null, cleanedProfile?: object}>}
-     */
     async function verifyUserSecret(userKey, plainPin, profileObj) {
         await ensureAuthReady();
         const utils = getUtils();
@@ -305,7 +257,6 @@
         const hashed = await utils.hashSecret(plainPin);
         const safeKey = utils.toSafeSecretKey(hashed);
 
-        // 1) 무유출 보안 경로 단건 조회
         try {
             const snap = await rtdb.ref(DB_ROOT + '/secrets/' + cleanKey + '/' + safeKey).once('value');
             const val = snap.val();
@@ -313,7 +264,6 @@
                 let authVer = (profileObj && profileObj.authVersion) || val.updatedAt || Date.now();
                 let cleanedProfile = null;
 
-                // 혹시 공개 프로필에 구버전 pin/pinHash가 남아있다면 즉시 정리
                 if (profileObj && (profileObj.pin !== undefined || profileObj.pinHash !== undefined || profileObj.secretMode !== 'zero-download')) {
                     cleanedProfile = Object.assign({}, profileObj, {
                         key: cleanKey,
@@ -336,7 +286,6 @@
             console.warn('[TripfullAPI] secrets 경로 조회 중 예외:', err);
         }
 
-        // 2) 구버전 프로필 호환 검증 및 무유출 구조 자동 이관
         if (profileObj && (profileObj.pinHash !== undefined || profileObj.pin !== undefined)) {
             const legacyMatch = await utils.verifyLegacySecret(plainPin, profileObj);
             if (legacyMatch) {
@@ -359,7 +308,6 @@
                     };
                 } catch (migErr) {
                     console.error('[TripfullAPI] 무유출 보안 자동 이관 실패:', migErr);
-                    // 이관 쓰기가 일시 실패했더라도 로그인 자체는 허용
                     return {
                         ok: true,
                         migrated: false,
@@ -376,9 +324,6 @@
     // 4. 프로필 & 여행 CRUD 연산
     // ========================================================================
 
-    /**
-     * 사용자 프로필을 tripfull/profiles/{userKey}에 저장합니다.
-     */
     async function saveProfile(userKey, profileObj) {
         await ensureAuthReady();
         const utils = getUtils();
@@ -387,7 +332,6 @@
         if (!cleanKey || !profileObj) return null;
 
         const payload = Object.assign({}, profileObj, { key: cleanKey });
-        // 이미 무유출 모드로 전환된 계정이라면 pin/pinHash가 실수로 섞이지 않도록 차단
         if (payload.secretMode === 'zero-download') {
             delete payload.pin;
             delete payload.pinHash;
@@ -397,9 +341,6 @@
         return payload;
     }
 
-    /**
-     * 신규 계정을 무유출 보안 방식으로 생성합니다.
-     */
     async function registerNewProfile(params) {
         const utils = getUtils();
         const cleanKey = utils.sanitizeKey(params.name);
@@ -423,10 +364,6 @@
         return newProf;
     }
 
-    /**
-     * 사용자 비밀번호를 변경합니다 (본인 프로필 수정 및 관리자 재설정 공용).
-     * secrets 경로 덮어쓰기 + 프로필의 authVersion 갱신 + 레거시 pin/pinHash 제거를 일괄 처리합니다.
-     */
     async function updateUserPassword(userKey, newPlainPin, existingProfile) {
         const utils = getUtils();
         const cleanKey = utils.sanitizeKey(userKey);
@@ -444,9 +381,6 @@
         return nextProfile;
     }
 
-    /**
-     * 사용자 계정의 프로필과 비밀 해시 노드를 모두 영구 삭제합니다.
-     */
     async function deleteProfile(userKey) {
         await ensureAuthReady();
         const utils = getUtils();
@@ -460,9 +394,6 @@
         ]);
     }
 
-    /**
-     * 여행 데이터 전체를 tripfull/trips/{tripId}에 저장합니다.
-     */
     async function saveTrip(tripObj) {
         await ensureAuthReady();
         if (!tripObj || !tripObj.id) return null;
@@ -472,14 +403,58 @@
         return payload;
     }
 
-    /**
-     * 특정 여행을 tripfull/trips/{tripId}에서 영구 삭제합니다.
-     */
     async function deleteTrip(tripId) {
         await ensureAuthReady();
         if (!tripId) return;
         const rtdb = getRtdb();
-        await rtdb.ref(DB_ROOT + '/trips/' + tripId).remove();
+        await Promise.all([
+            rtdb.ref(DB_ROOT + '/trips/' + tripId).remove(),
+            rtdb.ref(DB_ROOT + '/receipts/' + tripId).remove().catch(function () {})
+        ]);
+    }
+
+    // ========================================================================
+    // 5. [v0.2.2] 가계부 영수증 사진 분리 저장 · 지연 로딩 · 삭제
+    // ========================================================================
+
+    /**
+     * 압축된 영수증 이미지를 tripfull/receipts/{tripId}/{expenseId}에 저장합니다.
+     */
+    async function saveReceipt(tripId, expenseId, receiptData) {
+        await ensureAuthReady();
+        if (!tripId || !expenseId || !receiptData || !receiptData.dataUrl) return null;
+        const rtdb = getRtdb();
+        const payload = {
+            dataUrl: receiptData.dataUrl,
+            sizeKB: Number(receiptData.sizeKB) || 0,
+            width: Number(receiptData.width) || 0,
+            height: Number(receiptData.height) || 0,
+            uploadedBy: String(receiptData.uploadedBy || ''),
+            uploadedAt: Date.now()
+        };
+        await rtdb.ref(DB_ROOT + '/receipts/' + tripId + '/' + expenseId).set(payload);
+        return payload;
+    }
+
+    /**
+     * 특정 지출 건의 영수증 이미지를 필요할 때만 단건 조회합니다(지연 로딩).
+     */
+    async function getReceipt(tripId, expenseId) {
+        await ensureAuthReady();
+        if (!tripId || !expenseId) return null;
+        const rtdb = getRtdb();
+        const snap = await rtdb.ref(DB_ROOT + '/receipts/' + tripId + '/' + expenseId).once('value');
+        return snap.val() || null;
+    }
+
+    /**
+     * 특정 지출 건의 영수증 이미지를 삭제합니다.
+     */
+    async function deleteReceipt(tripId, expenseId) {
+        await ensureAuthReady();
+        if (!tripId || !expenseId) return;
+        const rtdb = getRtdb();
+        await rtdb.ref(DB_ROOT + '/receipts/' + tripId + '/' + expenseId).remove().catch(function () {});
     }
 
     // 전역 네임스페이스 등록
@@ -502,6 +477,9 @@
         updateUserPassword: updateUserPassword,
         deleteProfile: deleteProfile,
         saveTrip: saveTrip,
-        deleteTrip: deleteTrip
+        deleteTrip: deleteTrip,
+        saveReceipt: saveReceipt,
+        getReceipt: getReceipt,
+        deleteReceipt: deleteReceipt
     };
 })(window);
