@@ -133,10 +133,11 @@
             color: #a5b4fc !important;
         }
         html.dark .bg-purple-50 {
-            background-color: rgba(168, 85, 247, 0.15) !important;
+            background-color: rgba(168, 85, 247, 0.16) !important;
         }
-        html.dark .border-purple-200 {
-            border-color: rgba(168, 85, 247, 0.32) !important;
+        html.dark .border-purple-200,
+        html.dark .border-purple-300 {
+            border-color: rgba(168, 85, 247, 0.36) !important;
         }
         html.dark .text-purple-700 {
             color: #d8b4fe !important;
@@ -163,7 +164,8 @@
         html.dark .bg-amber-100 {
             background-color: rgba(245, 158, 11, 0.18) !important;
         }
-        html.dark .border-amber-200 {
+        html.dark .border-amber-200,
+        html.dark .border-amber-300 {
             border-color: rgba(245, 158, 11, 0.35) !important;
         }
         html.dark .text-amber-800 {
@@ -198,11 +200,11 @@
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
 
-    <!-- Tripfull v0.2.2 분리 모듈 (캐시 무효화 쿼리 적용) -->
-    <script src="./utils.js?v=0.2.2-1"></script>
-    <script src="./budget-engine.js?v=0.2.2-1"></script>
-    <script src="./firebase-api.js?v=0.2.2-1"></script>
-    <script type="text/babel" src="./modals.jsx?v=0.2.2-1"></script>
+    <!-- Tripfull v.0.2.2-b 분리 모듈 (캐시 무효화 쿼리 적용) -->
+    <script src="./utils.js?v=0.2.2-b"></script>
+    <script src="./budget-engine.js?v=0.2.2-b"></script>
+    <script src="./firebase-api.js?v=0.2.2-b"></script>
+    <script type="text/babel" src="./modals.jsx?v=0.2.2-b"></script>
 </head>
 <body class="bg-[#F4F7F9] dark:bg-slate-950 text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200 selection:bg-teal-500 selection:text-white">
     <div id="root">
@@ -217,7 +219,7 @@
     <script type="text/babel">
         const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
-        const APP_VERSION = 'v.0.2.2';
+        const APP_VERSION = 'v.0.2.2-b';
         const U = window.TripfullUtils;
         const B = window.TripfullBudget;
         const API = window.TripfullAPI;
@@ -389,6 +391,7 @@
             const [newExpense, setNewExpense] = useState({
                 day: 1, title: '', amount: '', currency: 'KRW',
                 payerId: 'c1', splitWith: ['c1'], category: 'food', method: 'card',
+                isPrivate: false, excludeFromSplit: false, ownerUserKey: '',
                 linkedPlaceId: '', linkedPlaceName: '', receiptUrl: '',
                 hasReceipt: false, pendingReceipt: null, removeReceipt: false
             });
@@ -418,11 +421,23 @@
                 });
             }, []);
 
+            // 비밀번호 재확인 요청 헬퍼 (프로필 수정 · 관리자 메뉴 보안 잠금)
+            const requestSecurityCheck = useCallback((title, message, onVerified) => {
+                setSecurityCheck({
+                    isOpen: true,
+                    title: title || '보안 확인',
+                    message: message || '계속하려면 현재 계정의 비밀번호를 입력해주세요.',
+                    pin: '',
+                    isVerifying: false,
+                    onVerified
+                });
+            }, []);
+
             // ================================================================
             // 1. 초기화: presets.json 로드, 다크모드, 시계, Firebase 실시간 구독
             // ================================================================
             useEffect(() => {
-                U.loadPresets('./presets.json?v=0.2.2-1').then(() => {
+                U.loadPresets('./presets.json?v=0.2.2-b').then(() => {
                     setPresetsVersion(v => v + 1);
                 });
             }, []);
@@ -527,7 +542,7 @@
             }, [isProfilesLoaded, registeredProfiles]);
 
             // ================================================================
-            // 2. 파생 데이터 계산 (보이는 여행 목록, 현재 여행, 정산/연동 집계)
+            // 2. 파생 데이터 계산 (보이는 여행, 나만 보기 필터링 지출, 정산 집계)
             // ================================================================
             const activeUserKey = useMemo(() => {
                 return currentProfile ? U.sanitizeKey(currentProfile.key || currentProfile.name) : '';
@@ -585,7 +600,14 @@
             const tripDays = useMemo(() => U.getTripDayNumbers(currentTrip), [currentTrip]);
             const companions = useMemo(() => toArray(currentTrip && currentTrip.companions), [currentTrip]);
             const itinerary = useMemo(() => (currentTrip && currentTrip.itinerary) || {}, [currentTrip]);
-            const expenses = useMemo(() => toArray(currentTrip && currentTrip.expenses), [currentTrip]);
+            const allExpenses = useMemo(() => toArray(currentTrip && currentTrip.expenses), [currentTrip]);
+            const visibleExpenses = useMemo(() => {
+                return allExpenses.filter(exp =>
+                    B && typeof B.isExpenseVisibleToUser === 'function'
+                        ? B.isExpenseVisibleToUser(exp, activeUserKey)
+                        : !exp.isPrivate
+                );
+            }, [allExpenses, activeUserKey]);
             const checklist = useMemo(() => toArray(currentTrip && currentTrip.checklist), [currentTrip]);
 
             useEffect(() => {
@@ -598,12 +620,15 @@
 
             const localTimeInfo = useMemo(() => U.getLocalTimeInfo(currentTrip, nowTick), [currentTrip, nowTick, presetsVersion]);
             const tripStatusBadge = useMemo(() => U.getTripStatusBadge ? U.getTripStatusBadge(currentTrip) : null, [currentTrip, nowTick]);
-            const budgetSummary = useMemo(() => B.calculateBudgetSummary(currentTrip), [currentTrip, presetsVersion]);
+            const budgetSummary = useMemo(
+                () => B.calculateBudgetSummary(currentTrip, activeUserKey),
+                [currentTrip, activeUserKey, presetsVersion]
+            );
 
-            // 일정 장소 ID별 연동 지출 집계 (1:N 다중 지출 양방향 매핑)
+            // 일정 장소 ID별 연동 지출 집계 (현재 사용자에게 보이는 지출만 합산)
             const linkedExpensesByPlaceId = useMemo(() => {
                 const map = {};
-                expenses.forEach(exp => {
+                visibleExpenses.forEach(exp => {
                     if (!exp || !exp.linkedPlaceId) return;
                     if (!map[exp.linkedPlaceId]) {
                         map[exp.linkedPlaceId] = { count: 0, totalKRW: 0 };
@@ -612,13 +637,13 @@
                     map[exp.linkedPlaceId].totalKRW += B.toKRW(currentTrip, exp.amount, exp.currency, exp.day || 0);
                 });
                 return map;
-            }, [expenses, currentTrip, presetsVersion]);
+            }, [visibleExpenses, currentTrip, presetsVersion]);
 
             const filteredExpenses = useMemo(() => {
-                if (expenseDayFilter === 'all') return expenses;
+                if (expenseDayFilter === 'all') return visibleExpenses;
                 const targetDay = Number(expenseDayFilter);
-                return expenses.filter(exp => Number(exp.day || 0) === targetDay);
-            }, [expenses, expenseDayFilter]);
+                return visibleExpenses.filter(exp => Number(exp.day || 0) === targetDay);
+            }, [visibleExpenses, expenseDayFilter]);
 
             const filteredExpenseTotalKRW = useMemo(() => {
                 return B.getFilteredExpenseTotalKRW(currentTrip, filteredExpenses);
@@ -685,7 +710,7 @@
             };
 
             // ================================================================
-            // 4. 인증 · 프로필 · 관리자 핸들러
+            // 4. 인증 · 프로필(비밀번호 재확인) · 관리자(비밀번호 재확인) 핸들러
             // ================================================================
             const handleLoginSubmit = async (e) => {
                 e.preventDefault();
@@ -760,14 +785,33 @@
                 showToast('👋 로그아웃되었습니다.');
             };
 
+            // 프로필 수정 진입 시 비밀번호 재확인 필수
             const openEditMyProfile = () => {
                 if (!currentProfile) return;
-                setEditProfileForm({
-                    name: currentProfile.name || '',
-                    avatar: currentProfile.avatar || '✈️',
-                    pin: ''
-                });
-                setIsEditProfileOpen(true);
+                requestSecurityCheck(
+                    '내 프로필 수정 보안 확인',
+                    '개인 프로필 및 비밀번호 설정에 접근하려면 현재 비밀번호를 입력해주세요.',
+                    () => {
+                        setEditProfileForm({
+                            name: currentProfile.name || '',
+                            avatar: currentProfile.avatar || '✈️',
+                            pin: ''
+                        });
+                        setIsEditProfileOpen(true);
+                    }
+                );
+            };
+
+            // 관리자 메뉴 진입 시 비밀번호 재확인 필수
+            const openUserManageModal = () => {
+                if (!currentProfile || !isAdmin) return;
+                requestSecurityCheck(
+                    '관리자 메뉴 보안 확인',
+                    '전체 계정 관리 화면에 접근하려면 관리자 비밀번호를 입력해주세요.',
+                    () => {
+                        setIsUserManageOpen(true);
+                    }
+                );
             };
 
             const handleSaveMyProfile = async (e) => {
@@ -807,7 +851,11 @@
                 if (!currentProfile || !activeUserKey) return;
                 setSecurityCheck(prev => ({ ...prev, isVerifying: true }));
                 try {
-                    const res = await API.verifyUserSecret(activeUserKey, securityCheck.pin, registeredProfiles[activeUserKey] || currentProfile);
+                    const res = await API.verifyUserSecret(
+                        activeUserKey,
+                        securityCheck.pin,
+                        registeredProfiles[activeUserKey] || currentProfile
+                    );
                     if (!res.ok) {
                         showToast('❌ 비밀번호가 일치하지 않습니다.');
                         setSecurityCheck(prev => ({ ...prev, isVerifying: false }));
@@ -1367,6 +1415,9 @@
                             splitWith: companions.map(c => c.id),
                             category: 'transport',
                             method: 'card',
+                            isPrivate: false,
+                            excludeFromSplit: false,
+                            ownerUserKey: activeUserKey,
                             linkedPlaceId: outItem.id,
                             linkedPlaceName: outItem.place,
                             updatedBy: authorTag
@@ -1467,6 +1518,9 @@
                             splitWith: companions.map(c => c.id),
                             category: 'hotel',
                             method: 'card',
+                            isPrivate: false,
+                            excludeFromSplit: false,
+                            ownerUserKey: activeUserKey,
                             linkedPlaceId: checkInItem.id,
                             linkedPlaceName: checkInItem.place,
                             updatedBy: authorTag
@@ -1482,7 +1536,7 @@
             };
 
             // ================================================================
-            // 7. 가계부 지출 · 영수증 지연 로딩 · 다회차 중간 정산 핸들러
+            // 7. 가계부 지출 (나만 보기·정산 제외 포함) · 영수증 · 중간 정산 핸들러
             // ================================================================
             const openAddExpenseModal = (defaultDay = null, preset = null) => {
                 if (!currentTrip) return;
@@ -1500,6 +1554,9 @@
                     splitWith: companions.map(c => c.id),
                     category: p.category || 'food',
                     method: 'card',
+                    isPrivate: false,
+                    excludeFromSplit: false,
+                    ownerUserKey: activeUserKey,
                     linkedPlaceId: p.linkedPlaceId || '',
                     linkedPlaceName: p.linkedPlaceName || '',
                     receiptUrl: '',
@@ -1521,6 +1578,9 @@
                     splitWith: toArray(exp.splitWith),
                     category: exp.category || 'food',
                     method: exp.method || 'card',
+                    isPrivate: Boolean(exp.isPrivate),
+                    excludeFromSplit: Boolean(exp.isPrivate || exp.excludeFromSplit),
+                    ownerUserKey: exp.ownerUserKey || activeUserKey,
                     linkedPlaceId: exp.linkedPlaceId || '',
                     linkedPlaceName: exp.linkedPlaceName || '',
                     receiptUrl: exp.receiptUrl || '',
@@ -1534,7 +1594,7 @@
             const openReceiptViewer = (expOrId) => {
                 if (!currentTrip) return;
                 const exp = typeof expOrId === 'string'
-                    ? expenses.find(x => x.id === expOrId)
+                    ? visibleExpenses.find(x => x.id === expOrId)
                     : expOrId;
                 if (!exp) return;
                 const krwVal = B.toKRW(currentTrip, exp.amount, exp.currency, exp.day || 0);
@@ -1555,12 +1615,19 @@
             const handleSaveExpense = async (e) => {
                 e.preventDefault();
                 if (!newExpense.title.trim() || !newExpense.amount || !currentTrip) return;
-                if (newExpense.splitWith.length === 0) return showToast('함께 정산할 인원을 최소 1명 이상 선택해주세요.');
+
+                const isPrivate = Boolean(newExpense.isPrivate);
+                const excludeFromSplit = isPrivate || Boolean(newExpense.excludeFromSplit);
+                if (!excludeFromSplit && toArray(newExpense.splitWith).length === 0) {
+                    return showToast('함께 정산할 인원을 최소 1명 이상 선택해주세요.');
+                }
 
                 setIsSavingExpense(true);
                 try {
                     const authorTag = currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : '익명';
                     const expId = editingExpenseId || ('e_' + Date.now());
+                    const existingExp = editingExpenseId ? allExpenses.find(x => x.id === editingExpenseId) : null;
+                    const ownerUserKey = (existingExp && existingExp.ownerUserKey) || newExpense.ownerUserKey || activeUserKey;
                     let finalHasReceipt = Boolean(newExpense.hasReceipt);
 
                     if (newExpense.pendingReceipt && newExpense.pendingReceipt.dataUrl) {
@@ -1585,9 +1652,12 @@
                         amount: Number(newExpense.amount),
                         currency: newExpense.currency,
                         payerId: newExpense.payerId,
-                        splitWith: newExpense.splitWith,
+                        splitWith: excludeFromSplit ? [] : toArray(newExpense.splitWith),
                         category: newExpense.category,
                         method: newExpense.method,
+                        isPrivate,
+                        excludeFromSplit,
+                        ownerUserKey,
                         linkedPlaceId: newExpense.linkedPlaceId || '',
                         linkedPlaceName: newExpense.linkedPlaceName || '',
                         receiptUrl: cleanReceiptUrl,
@@ -1602,7 +1672,11 @@
                             : [itemData, ...toArray(t.expenses)]
                     }));
                     setIsExpenseModalOpen(false);
-                    showToast(editingExpenseId ? '✏️ 지출 내역이 수정되었습니다.' : '💰 가계부에 지출이 기록되었습니다.');
+                    showToast(
+                        editingExpenseId
+                            ? '✏️ 지출 내역이 수정되었습니다.'
+                            : (isPrivate ? '🔒 나만 보기 지출이 기록되었습니다.' : '💰 가계부에 지출이 기록되었습니다.')
+                    );
                 } catch (err) {
                     console.error('[Tripfull] 지출/영수증 저장 실패:', err);
                     showToast('❌ 저장 중 오류가 발생했습니다. 네트워크를 확인해주세요.');
@@ -1630,17 +1704,20 @@
             const moveExpenseOrder = (expId, direction, e) => {
                 if (e) e.stopPropagation();
                 if (!currentTrip) return;
-                const fullList = [...expenses];
+                const fullList = [...allExpenses];
                 const idx = fullList.findIndex(x => x.id === expId);
                 if (idx === -1) return;
 
                 const step = direction === 'up' ? -1 : 1;
                 let targetIdx = idx + step;
-                if (expenseDayFilter !== 'all') {
-                    const fDay = Number(expenseDayFilter);
-                    while (targetIdx >= 0 && targetIdx < fullList.length && Number(fullList[targetIdx].day || 0) !== fDay) {
-                        targetIdx += step;
-                    }
+                const fDay = expenseDayFilter === 'all' ? null : Number(expenseDayFilter);
+
+                while (targetIdx >= 0 && targetIdx < fullList.length) {
+                    const candidate = fullList[targetIdx];
+                    const visible = B.isExpenseVisibleToUser ? B.isExpenseVisibleToUser(candidate, activeUserKey) : !candidate.isPrivate;
+                    const dayMatched = fDay === null || Number(candidate.day || 0) === fDay;
+                    if (visible && dayMatched) break;
+                    targetIdx += step;
                 }
                 if (targetIdx < 0 || targetIdx >= fullList.length) return;
 
@@ -1785,10 +1862,10 @@
                         </div>
                     )}
 
-                    {/* ==================== 상단 헤더 (여행 기본정보·긴급연락 포함) ==================== */}
-                    <header className="tripfull-header bg-gradient-to-r from-[#00C48C] via-[#00B894] to-[#00A896] text-white pt-3.5 pb-4 px-4 sm:px-6 lg:px-10 shadow-md transition-colors duration-200">
-                        <div className="max-w-5xl mx-auto space-y-2.5">
-                            {/* 1단: 브랜드 · 동기화 상태 · 보관함 · 테마 · 프로필 */}
+                    {/* ==================== 상단 HUD 헤더 ==================== */}
+                    <header className="tripfull-header bg-gradient-to-r from-[#00C48C] via-[#00B894] to-[#00A896] text-white pt-3.5 pb-4 px-4 sm:px-6 lg:px-8 shadow-md transition-colors duration-200">
+                        <div className="max-w-6xl mx-auto space-y-2.5">
+                            {/* 1단: 브랜드 · 동기화 · 보관함 · 테마 · 관리(보안) · 프로필(보안) */}
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                                     <div className="bg-black/20 border border-white/20 backdrop-blur-xs px-2.5 py-1 rounded-full text-[11px] font-extrabold flex items-center gap-1.5">
@@ -1830,8 +1907,9 @@
                                     {currentProfile && isAdmin && (
                                         <button
                                             type="button"
-                                            onClick={() => setIsUserManageOpen(true)}
+                                            onClick={openUserManageModal}
                                             className="bg-amber-400/90 hover:bg-amber-400 text-slate-950 px-2.5 py-1 rounded-full text-[11px] font-extrabold transition"
+                                            title="비밀번호 확인 후 관리자 메뉴 진입"
                                         >
                                             👑 관리
                                         </button>
@@ -1842,6 +1920,7 @@
                                                 type="button"
                                                 onClick={openEditMyProfile}
                                                 className="bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-full text-xs font-extrabold flex items-center gap-1 transition"
+                                                title="비밀번호 확인 후 프로필 수정"
                                             >
                                                 <span>{currentProfile.avatar || '✈️'}</span>
                                                 <span>{currentProfile.name}</span>
@@ -1866,7 +1945,7 @@
                                 </div>
                             </div>
 
-                            {/* 2단: 현재 여행 타이틀 · 기간 · 액션 버튼 */}
+                            {/* 2단: 현재 여행 타이틀 · 기간 · HUD 액션 버튼 (항공/숙소 상단 이동) */}
                             {currentProfile && currentTrip && (
                                 <>
                                     <div className="flex flex-col md:flex-row md:items-end justify-between gap-2.5 pt-1">
@@ -1901,6 +1980,14 @@
                                         </div>
 
                                         <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsFlightHotelModalOpen(true)}
+                                                className="bg-white/20 hover:bg-white/30 border border-white/25 px-2.5 py-1.5 rounded-xl text-xs font-extrabold transition"
+                                                title="항공편(편도/왕복) · 숙소(전체/일부) 자동 일정 배치"
+                                            >
+                                                ✈️ 항공/숙소
+                                            </button>
                                             <button
                                                 type="button"
                                                 onClick={() => setIsMemberModalOpen(true)}
@@ -1983,9 +2070,9 @@
 
                     {currentProfile && currentTrip && (
                         <>
-                            {/* 메인 네비게이션 탭 (일정 / 가계부 / 준비물 단순화) */}
+                            {/* 메인 네비게이션 탭 (일정 / 가계부 / 준비물) */}
                             <div className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-2xs">
-                                <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-10 flex">
+                                <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex">
                                     {[
                                         { id: 'itinerary', label: '일정' },
                                         { id: 'budget', label: '가계부' },
@@ -2010,8 +2097,8 @@
                                 </div>
                             </div>
 
-                            <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-10 pt-4">
-                                {/* ==================== 1. 일정 탭 ==================== */}
+                            <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+                                {/* ==================== 1. 일정 탭 (와이드 2단 분할: 좌 동선 / 우 상세 일정) ==================== */}
                                 {activeTab === 'itinerary' && (
                                     <div className="space-y-4">
                                         {/* 일차 선택 가로 스크롤 바 */}
@@ -2048,183 +2135,269 @@
                                             </button>
                                         </div>
 
-                                        {/* 1줄 가로 스크롤 이동 동선 바 (모바일 스크롤 최소화) */}
-                                        <div className="bg-white rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 border border-slate-200 shadow-2xs space-y-2">
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className="text-xs font-extrabold text-slate-700">
-                                                    🧭 {selectedDay}일차 이동 동선
-                                                </span>
-                                                {selectedDayList.length > 0 && (
-                                                    <a
-                                                        href={U.getDayRouteMapUrl(selectedDay, currentTrip)}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        className="text-[11px] font-extrabold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-0.5 rounded-lg border border-emerald-200 shrink-0"
-                                                    >
-                                                        🗺️ 전체 동선 ↗
-                                                    </a>
-                                                )}
-                                            </div>
+                                        {/* 반응형 2단 그리드 (모바일: 세로 1단 / 와이드 lg+: 좌 동선 4칸 + 우 상세일정 8칸) */}
+                                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-start">
+                                            {/* 좌측 단: 이동 동선 (모바일 가로 1줄 슬림 / 와이드 세로 고정 패널) */}
+                                            <aside className="lg:col-span-4 lg:sticky lg:top-16">
+                                                <div className="bg-white rounded-2xl lg:rounded-3xl px-3.5 py-2.5 lg:p-5 border border-slate-200 shadow-2xs space-y-2 lg:space-y-3">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <span className="text-xs lg:text-sm font-extrabold text-slate-800">
+                                                            🧭 {selectedDay}일차 이동 동선
+                                                        </span>
+                                                        {selectedDayList.length > 0 && (
+                                                            <a
+                                                                href={U.getDayRouteMapUrl(selectedDay, currentTrip)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="text-[11px] font-extrabold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 shrink-0"
+                                                            >
+                                                                🗺️ 전체 동선 ↗
+                                                            </a>
+                                                        )}
+                                                    </div>
 
-                                            {selectedDayList.length === 0 ? (
-                                                <div className="text-[11px] text-slate-400 py-0.5">
-                                                    장소를 등록하면 이동 동선이 한 줄로 연결됩니다.
+                                                    {selectedDayList.length === 0 ? (
+                                                        <div className="text-[11px] lg:text-xs text-slate-400 py-1 lg:py-4 lg:text-center">
+                                                            장소를 등록하면 이동 동선이 순서대로 연결됩니다.
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            {/* 모바일 전용: 가로 1줄 스크롤 알약 */}
+                                                            <div className="flex lg:hidden items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                                                                {selectedDayList.map((it, idx) => (
+                                                                    <React.Fragment key={it.id}>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => openEditPlaceModal(selectedDay, it)}
+                                                                            className="inline-flex items-center gap-1.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-[#00C48C] px-2.5 py-1 rounded-full shrink-0 transition"
+                                                                        >
+                                                                            <span className="w-4 h-4 rounded-full bg-[#00C48C] text-white text-[10px] font-extrabold flex items-center justify-center">
+                                                                                {idx + 1}
+                                                                            </span>
+                                                                            <span className="text-xs font-extrabold text-slate-700 whitespace-nowrap max-w-[140px] truncate">
+                                                                                {it.place}
+                                                                            </span>
+                                                                        </button>
+                                                                        {idx < selectedDayList.length - 1 && (
+                                                                            <span className="text-[11px] font-black text-slate-300 shrink-0">➔</span>
+                                                                        )}
+                                                                    </React.Fragment>
+                                                                ))}
+                                                            </div>
+
+                                                            {/* 와이드 화면 전용: 좌측 세로 동선 요약 */}
+                                                            <div className="hidden lg:block space-y-2 max-h-[65vh] overflow-y-auto pr-1">
+                                                                {selectedDayList.map((it, idx) => {
+                                                                    const meta = CATEGORY_META[it.category] || CATEGORY_META.sightseeing || { emoji: '📍' };
+                                                                    return (
+                                                                        <div key={it.id} className="space-y-1">
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => openEditPlaceModal(selectedDay, it)}
+                                                                                className="w-full text-left flex items-center gap-2.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-[#00C48C] px-3 py-2 rounded-2xl transition"
+                                                                            >
+                                                                                <span className="w-5 h-5 rounded-full bg-[#00C48C] text-white text-[11px] font-extrabold flex items-center justify-center shrink-0">
+                                                                                    {idx + 1}
+                                                                                </span>
+                                                                                <div className="min-w-0 flex-1">
+                                                                                    <div className="text-xs font-extrabold text-slate-800 truncate">
+                                                                                        {meta.emoji} {it.place}
+                                                                                    </div>
+                                                                                    <div className="text-[11px] text-slate-400 font-bold">
+                                                                                        {it.time ? (it.endTime ? `${it.time} ~ ${it.endTime}` : it.time) : '시각미정'}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </button>
+                                                                            {idx < selectedDayList.length - 1 && (
+                                                                                <div className="pl-5 text-[10px] font-extrabold text-slate-300">↓</div>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </>
+                                                    )}
                                                 </div>
-                                            ) : (
-                                                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-                                                    {selectedDayList.map((it, idx) => (
-                                                        <React.Fragment key={it.id}>
+                                            </aside>
+
+                                            {/* 우측 단: 상세 일정 타임라인 */}
+                                            <section className="lg:col-span-8 space-y-3.5">
+                                                <div className="flex flex-wrap justify-between items-center gap-2 px-0.5">
+                                                    <div>
+                                                        <h3 className="text-base sm:text-lg font-extrabold text-slate-800">{selectedDay}일차 상세 일정</h3>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                        {selectedDayList.length > 1 && (
                                                             <button
                                                                 type="button"
-                                                                onClick={() => openEditPlaceModal(selectedDay, it)}
-                                                                className="inline-flex items-center gap-1.5 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-[#00C48C] px-2.5 py-1 rounded-full shrink-0 transition"
+                                                                onClick={() => handleSortDayItinerary(selectedDay)}
+                                                                className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-extrabold px-2.5 py-1.5 rounded-xl transition whitespace-nowrap"
+                                                                title="방문 시각이 빠른 순서대로 정렬합니다"
                                                             >
-                                                                <span className="w-4 h-4 rounded-full bg-[#00C48C] text-white text-[10px] font-extrabold flex items-center justify-center">
-                                                                    {idx + 1}
-                                                                </span>
-                                                                <span className="text-xs font-extrabold text-slate-700 whitespace-nowrap max-w-[140px] truncate">
-                                                                    {it.place}
-                                                                </span>
+                                                                ⏰ 시간순
                                                             </button>
-                                                            {idx < selectedDayList.length - 1 && (
-                                                                <span className="text-[11px] font-black text-slate-300 shrink-0">➔</span>
-                                                            )}
-                                                        </React.Fragment>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        {/* 상세 일정 타임라인 */}
-                                        <div className="space-y-3.5">
-                                            <div className="flex flex-wrap justify-between items-center gap-2 px-0.5">
-                                                <div>
-                                                    <h3 className="text-base sm:text-lg font-extrabold text-slate-800">{selectedDay}일차 상세 일정</h3>
-                                                </div>
-                                                <div className="flex items-center gap-1.5 flex-wrap">
-                                                    {selectedDayList.length > 1 && (
+                                                        )}
                                                         <button
                                                             type="button"
-                                                            onClick={() => handleSortDayItinerary(selectedDay)}
-                                                            className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-extrabold px-2.5 py-1.5 rounded-xl transition whitespace-nowrap"
-                                                            title="방문 시각이 빠른 순서대로 정렬합니다"
+                                                            onClick={openAddPlaceModal}
+                                                            className="bg-[#00C48C] hover:bg-[#00A878] text-white text-xs sm:text-sm font-extrabold px-3.5 py-1.5 rounded-xl shadow-xs transition whitespace-nowrap"
                                                         >
-                                                            ⏰ 시간순
-                                                        </button>
-                                                    )}
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setIsFlightHotelModalOpen(true)}
-                                                        className="bg-emerald-50 hover:bg-emerald-100 text-[#00A878] border border-emerald-200 text-xs font-extrabold px-2.5 py-1.5 rounded-xl transition whitespace-nowrap"
-                                                    >
-                                                        ✈️ 항공/숙소
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={openAddPlaceModal}
-                                                        className="bg-[#00C48C] hover:bg-[#00A878] text-white text-xs sm:text-sm font-extrabold px-3.5 py-1.5 rounded-xl shadow-xs transition whitespace-nowrap"
-                                                    >
-                                                        + 새 장소
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            {selectedDayList.length === 0 ? (
-                                                <div className="bg-white rounded-3xl p-10 text-center border border-slate-200">
-                                                    <p className="text-slate-600 font-extrabold text-sm sm:text-base mb-1">아직 등록된 장소가 없습니다</p>
-                                                    <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
-                                                        <button type="button" onClick={() => setIsFlightHotelModalOpen(true)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-extrabold px-4 py-2 rounded-xl border border-slate-200">
-                                                            ✈️ 항공·숙소 자동 배치
-                                                        </button>
-                                                        <button type="button" onClick={openAddPlaceModal} className="bg-emerald-50 text-[#00A878] text-xs sm:text-sm font-extrabold px-4 py-2 rounded-xl border border-emerald-200">
-                                                            + 첫 장소 등록하기
+                                                            + 새 장소
                                                         </button>
                                                     </div>
                                                 </div>
-                                            ) : (
-                                                <div className="timeline-track relative pl-7 space-y-2.5 before:content-[''] before:absolute before:left-3 before:top-5 before:bottom-5 before:w-0.5 before:bg-emerald-200">
-                                                    {selectedDayList.map((item, idx) => {
-                                                        const meta = CATEGORY_META[item.category] || CATEGORY_META.sightseeing || { emoji: '📍', label: '관광', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' };
-                                                        const totalCount = selectedDayList.length;
-                                                        const displayAddr = U.upgradeDisplayAddress(item.address);
-                                                        const safeLinkUrl = U.normalizeExternalUrl ? U.normalizeExternalUrl(item.linkUrl) : '';
-                                                        const linkedInfo = linkedExpensesByPlaceId[item.id];
-                                                        const nextItem = idx < totalCount - 1 ? selectedDayList[idx + 1] : null;
-                                                        const itemCurrency = item.currency || currentTrip.currency;
-                                                        const itemCostKRW = item.cost > 0 ? B.toKRW(currentTrip, item.cost, itemCurrency, selectedDay) : 0;
 
-                                                        return (
-                                                            <React.Fragment key={item.id}>
-                                                                <div className="relative">
-                                                                    <div className="absolute -left-7 top-4 w-6 h-6 rounded-full bg-[#00C48C] text-white text-xs font-extrabold flex items-center justify-center ring-4 ring-[#F4F7F9]">
-                                                                        {idx + 1}
-                                                                    </div>
-                                                                    <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs hover:border-[#00C48C] transition">
-                                                                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                                                                            <div onClick={() => openEditPlaceModal(selectedDay, item)} className="space-y-1.5 flex-1 cursor-pointer">
-                                                                                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                                                                                    <span className="text-xs font-extrabold text-[#00A878] bg-emerald-50 px-2 py-0.5 rounded-lg">
-                                                                                        {item.time ? (item.endTime ? `${item.time} ~ ${item.endTime}` : item.time) : '시각미정'}
-                                                                                    </span>
-                                                                                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-lg border ${meta.color}`}>
-                                                                                        {meta.emoji} {meta.label}
-                                                                                    </span>
-                                                                                    <h4 className="text-sm sm:text-base font-extrabold text-slate-800">{item.place}</h4>
-                                                                                    {item.updatedBy && (
-                                                                                        <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">
-                                                                                            ✍️ {item.updatedBy}
+                                                {selectedDayList.length === 0 ? (
+                                                    <div className="bg-white rounded-3xl p-10 text-center border border-slate-200">
+                                                        <p className="text-slate-600 font-extrabold text-sm sm:text-base mb-1">아직 등록된 장소가 없습니다</p>
+                                                        <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+                                                            <button type="button" onClick={openAddPlaceModal} className="bg-emerald-50 text-[#00A878] text-xs sm:text-sm font-extrabold px-4 py-2 rounded-xl border border-emerald-200">
+                                                                + 첫 장소 등록하기
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="timeline-track relative pl-7 space-y-2.5 before:content-[''] before:absolute before:left-3 before:top-5 before:bottom-5 before:w-0.5 before:bg-emerald-200">
+                                                        {selectedDayList.map((item, idx) => {
+                                                            const meta = CATEGORY_META[item.category] || CATEGORY_META.sightseeing || { emoji: '📍', label: '관광', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' };
+                                                            const totalCount = selectedDayList.length;
+                                                            const displayAddr = U.upgradeDisplayAddress(item.address);
+                                                            const safeLinkUrl = U.normalizeExternalUrl ? U.normalizeExternalUrl(item.linkUrl) : '';
+                                                            const linkedInfo = linkedExpensesByPlaceId[item.id];
+                                                            const nextItem = idx < totalCount - 1 ? selectedDayList[idx + 1] : null;
+                                                            const itemCurrency = item.currency || currentTrip.currency;
+                                                            const itemCostKRW = item.cost > 0 ? B.toKRW(currentTrip, item.cost, itemCurrency, selectedDay) : 0;
+
+                                                            return (
+                                                                <React.Fragment key={item.id}>
+                                                                    <div className="relative">
+                                                                        <div className="absolute -left-7 top-4 w-6 h-6 rounded-full bg-[#00C48C] text-white text-xs font-extrabold flex items-center justify-center ring-4 ring-[#F4F7F9]">
+                                                                            {idx + 1}
+                                                                        </div>
+                                                                        <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-2xs hover:border-[#00C48C] transition">
+                                                                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                                                                                <div onClick={() => openEditPlaceModal(selectedDay, item)} className="space-y-1.5 flex-1 cursor-pointer">
+                                                                                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                                                                                        <span className="text-xs font-extrabold text-[#00A878] bg-emerald-50 px-2 py-0.5 rounded-lg">
+                                                                                            {item.time ? (item.endTime ? `${item.time} ~ ${item.endTime}` : item.time) : '시각미정'}
                                                                                         </span>
+                                                                                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-lg border ${meta.color}`}>
+                                                                                            {meta.emoji} {meta.label}
+                                                                                        </span>
+                                                                                        <h4 className="text-sm sm:text-base font-extrabold text-slate-800">{item.place}</h4>
+                                                                                        {item.updatedBy && (
+                                                                                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-bold">
+                                                                                                ✍️ {item.updatedBy}
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+
+                                                                                    {displayAddr && (
+                                                                                        <div className="text-xs text-slate-500">📍 {displayAddr}</div>
                                                                                     )}
-                                                                                </div>
 
-                                                                                {displayAddr && (
-                                                                                    <div className="text-xs text-slate-500">📍 {displayAddr}</div>
-                                                                                )}
-
-                                                                                <div className="pt-0.5 flex items-center gap-1.5 flex-wrap">
-                                                                                    <a
-                                                                                        href={U.getSinglePlaceMapUrl(item, currentTrip.destination)}
-                                                                                        target="_blank"
-                                                                                        rel="noopener noreferrer"
-                                                                                        onClick={e => e.stopPropagation()}
-                                                                                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-lg"
-                                                                                    >
-                                                                                        🗺️ 지도 ↗
-                                                                                    </a>
-                                                                                    {safeLinkUrl && (
+                                                                                    <div className="pt-0.5 flex items-center gap-1.5 flex-wrap">
                                                                                         <a
-                                                                                            href={safeLinkUrl}
+                                                                                            href={U.getSinglePlaceMapUrl(item, currentTrip.destination)}
                                                                                             target="_blank"
                                                                                             rel="noopener noreferrer"
                                                                                             onClick={e => e.stopPropagation()}
-                                                                                            className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-lg"
+                                                                                            className="inline-flex items-center gap-1 text-[11px] font-bold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-lg"
                                                                                         >
-                                                                                            🔗 예약/링크 ↗
+                                                                                            🗺️ 지도 ↗
                                                                                         </a>
+                                                                                        {safeLinkUrl && (
+                                                                                            <a
+                                                                                                href={safeLinkUrl}
+                                                                                                target="_blank"
+                                                                                                rel="noopener noreferrer"
+                                                                                                onClick={e => e.stopPropagation()}
+                                                                                                className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-lg"
+                                                                                            >
+                                                                                                🔗 예약/링크 ↗
+                                                                                            </a>
+                                                                                        )}
+                                                                                    </div>
+
+                                                                                    {item.memo && (
+                                                                                        <p className="text-xs text-slate-600 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
+                                                                                            💡 {item.memo}
+                                                                                        </p>
                                                                                     )}
                                                                                 </div>
 
-                                                                                {item.memo && (
-                                                                                    <p className="text-xs text-slate-600 bg-slate-50 px-3 py-2 rounded-xl border border-slate-100">
-                                                                                        💡 {item.memo}
-                                                                                    </p>
-                                                                                )}
-                                                                            </div>
-
-                                                                            <div className="flex sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100 gap-2 shrink-0">
-                                                                                <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                                                                                    {linkedInfo && linkedInfo.count > 0 ? (
-                                                                                        <>
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                onClick={(e) => {
-                                                                                                    e.stopPropagation();
-                                                                                                    setActiveTab('budget');
-                                                                                                }}
-                                                                                                className="text-[11px] font-extrabold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 whitespace-nowrap"
-                                                                                            >
-                                                                                                ✅ 가계부 {linkedInfo.count}건 ({linkedInfo.totalKRW.toLocaleString()}원)
-                                                                                            </button>
+                                                                                <div className="flex sm:flex-col items-center sm:items-end justify-between border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100 gap-2 shrink-0">
+                                                                                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                                                                        {linkedInfo && linkedInfo.count > 0 ? (
+                                                                                            <>
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={(e) => {
+                                                                                                        e.stopPropagation();
+                                                                                                        setActiveTab('budget');
+                                                                                                    }}
+                                                                                                    className="text-[11px] font-extrabold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 whitespace-nowrap"
+                                                                                                >
+                                                                                                    ✅ 가계부 {linkedInfo.count}건 ({linkedInfo.totalKRW.toLocaleString()}원)
+                                                                                                </button>
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={(e) => {
+                                                                                                        e.stopPropagation();
+                                                                                                        openAddExpenseModal(selectedDay, {
+                                                                                                            linkedPlaceId: item.id,
+                                                                                                            linkedPlaceName: item.place,
+                                                                                                            title: item.place,
+                                                                                                            category: item.category
+                                                                                                        });
+                                                                                                    }}
+                                                                                                    className="text-[11px] font-bold text-slate-600 hover:bg-slate-100 px-2 py-1 rounded-lg border border-slate-200 whitespace-nowrap"
+                                                                                                >
+                                                                                                    + 추가
+                                                                                                </button>
+                                                                                            </>
+                                                                                        ) : item.cost > 0 ? (
+                                                                                            <>
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={(e) => {
+                                                                                                        e.stopPropagation();
+                                                                                                        const newExp = {
+                                                                                                            id: 'e_' + Date.now(),
+                                                                                                            day: selectedDay,
+                                                                                                            title: item.place,
+                                                                                                            amount: item.cost,
+                                                                                                            currency: itemCurrency,
+                                                                                                            payerId: companions[0]?.id || 'c1',
+                                                                                                            splitWith: companions.map(c => c.id),
+                                                                                                            category: item.category,
+                                                                                                            method: 'card',
+                                                                                                            isPrivate: false,
+                                                                                                            excludeFromSplit: false,
+                                                                                                            ownerUserKey: activeUserKey,
+                                                                                                            linkedPlaceId: item.id,
+                                                                                                            linkedPlaceName: item.place,
+                                                                                                            updatedBy: currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : ''
+                                                                                                        };
+                                                                                                        updateCurrentTrip(t => ({ ...t, expenses: [newExp, ...toArray(t.expenses)] }));
+                                                                                                        showToast(`💰 '${item.place}' 비용이 가계부에 연동되었습니다.`);
+                                                                                                    }}
+                                                                                                    className="text-[11px] font-bold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 whitespace-nowrap"
+                                                                                                >
+                                                                                                    + 가계부로 보내기
+                                                                                                </button>
+                                                                                                <div className="text-right">
+                                                                                                    <div className="text-xs sm:text-sm font-extrabold text-slate-800">
+                                                                                                        {formatMoneyKorSafe(item.cost, itemCurrency)}
+                                                                                                    </div>
+                                                                                                    {itemCurrency !== 'KRW' && (
+                                                                                                        <div className="text-[11px] text-slate-400">
+                                                                                                            ({itemCostKRW.toLocaleString()}원)
+                                                                                                        </div>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            </>
+                                                                                        ) : (
                                                                                             <button
                                                                                                 type="button"
                                                                                                 onClick={(e) => {
@@ -2236,221 +2409,176 @@
                                                                                                         category: item.category
                                                                                                     });
                                                                                                 }}
-                                                                                                className="text-[11px] font-bold text-slate-600 hover:bg-slate-100 px-2 py-1 rounded-lg border border-slate-200 whitespace-nowrap"
+                                                                                                className="text-[11px] font-bold text-slate-400 hover:text-[#00A878] hover:bg-emerald-50 px-2 py-1 rounded-lg border border-dashed border-slate-200 whitespace-nowrap"
                                                                                             >
-                                                                                                + 추가
+                                                                                                + 지출 기록
                                                                                             </button>
-                                                                                        </>
-                                                                                    ) : item.cost > 0 ? (
-                                                                                        <>
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                onClick={(e) => {
-                                                                                                    e.stopPropagation();
-                                                                                                    const newExp = {
-                                                                                                        id: 'e_' + Date.now(),
-                                                                                                        day: selectedDay,
-                                                                                                        title: item.place,
-                                                                                                        amount: item.cost,
-                                                                                                        currency: itemCurrency,
-                                                                                                        payerId: companions[0]?.id || 'c1',
-                                                                                                        splitWith: companions.map(c => c.id),
-                                                                                                        category: item.category,
-                                                                                                        method: 'card',
-                                                                                                        linkedPlaceId: item.id,
-                                                                                                        linkedPlaceName: item.place,
-                                                                                                        updatedBy: currentProfile ? `${currentProfile.avatar} ${currentProfile.name}` : ''
-                                                                                                    };
-                                                                                                    updateCurrentTrip(t => ({ ...t, expenses: [newExp, ...toArray(t.expenses)] }));
-                                                                                                    showToast(`💰 '${item.place}' 비용이 가계부에 연동되었습니다.`);
-                                                                                                }}
-                                                                                                className="text-[11px] font-bold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 whitespace-nowrap"
-                                                                                            >
-                                                                                                + 가계부로 보내기
-                                                                                            </button>
-                                                                                            <div className="text-right">
-                                                                                                <div className="text-xs sm:text-sm font-extrabold text-slate-800">
-                                                                                                    {formatMoneyKorSafe(item.cost, itemCurrency)}
-                                                                                                </div>
-                                                                                                {itemCurrency !== 'KRW' && (
-                                                                                                    <div className="text-[11px] text-slate-400">
-                                                                                                        ({itemCostKRW.toLocaleString()}원)
-                                                                                                    </div>
-                                                                                                )}
-                                                                                            </div>
-                                                                                        </>
-                                                                                    ) : (
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={(e) => {
-                                                                                                e.stopPropagation();
-                                                                                                openAddExpenseModal(selectedDay, {
-                                                                                                    linkedPlaceId: item.id,
-                                                                                                    linkedPlaceName: item.place,
-                                                                                                    title: item.place,
-                                                                                                    category: item.category
-                                                                                                });
-                                                                                            }}
-                                                                                            className="text-[11px] font-bold text-slate-400 hover:text-[#00A878] hover:bg-emerald-50 px-2 py-1 rounded-lg border border-dashed border-slate-200 whitespace-nowrap"
-                                                                                        >
-                                                                                            + 지출 기록
-                                                                                        </button>
-                                                                                    )}
-                                                                                </div>
-
-                                                                                <div className="flex items-center gap-1">
-                                                                                    <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
-                                                                                        <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'top', e)} disabled={idx === 0} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">⟪</button>
-                                                                                        <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'up', e)} disabled={idx === 0} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">∧</button>
-                                                                                        <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'down', e)} disabled={idx === totalCount - 1} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">∨</button>
-                                                                                        <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'bottom', e)} disabled={idx === totalCount - 1} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">⟫</button>
+                                                                                        )}
                                                                                     </div>
-                                                                                    <button type="button" onClick={() => openEditPlaceModal(selectedDay, item)} className="text-[11px] font-bold text-slate-600 hover:bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">수정</button>
-                                                                                    <button type="button" onClick={(e) => handleDeletePlace(selectedDay, item, e)} className="text-[11px] font-bold text-rose-500 hover:bg-rose-50 px-2 py-1 rounded-lg">삭제</button>
+
+                                                                                    <div className="flex items-center gap-1">
+                                                                                        <div className="flex items-center bg-slate-100 rounded-lg p-0.5 border border-slate-200">
+                                                                                            <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'top', e)} disabled={idx === 0} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">⟪</button>
+                                                                                            <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'up', e)} disabled={idx === 0} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">∧</button>
+                                                                                            <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'down', e)} disabled={idx === totalCount - 1} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">∨</button>
+                                                                                            <button type="button" onClick={(e) => movePlaceOrder(selectedDay, idx, 'bottom', e)} disabled={idx === totalCount - 1} className="w-6 h-6 flex items-center justify-center text-[11px] font-black rounded hover:bg-white disabled:opacity-25">⟫</button>
+                                                                                        </div>
+                                                                                        <button type="button" onClick={() => openEditPlaceModal(selectedDay, item)} className="text-[11px] font-bold text-slate-600 hover:bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">수정</button>
+                                                                                        <button type="button" onClick={(e) => handleDeletePlace(selectedDay, item, e)} className="text-[11px] font-bold text-rose-500 hover:bg-rose-50 px-2 py-1 rounded-lg">삭제</button>
+                                                                                    </div>
                                                                                 </div>
                                                                             </div>
                                                                         </div>
                                                                     </div>
-                                                                </div>
 
-                                                                {/* 구간 길찾기 연결선 버튼 (A -> B) */}
-                                                                {nextItem && (
-                                                                    <div className="flex items-center pl-2 py-0.5">
-                                                                        <a
-                                                                            href={U.getLegRouteMapUrl(item, nextItem, currentTrip.destination)}
-                                                                            target="_blank"
-                                                                            rel="noopener noreferrer"
-                                                                            className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-[#00A878] bg-white border border-slate-200 hover:border-[#00C48C] px-2.5 py-0.5 rounded-full shadow-2xs transition"
-                                                                        >
-                                                                            🚇 다음 장소 길찾기 ↗
-                                                                        </a>
-                                                                    </div>
-                                                                )}
-                                                            </React.Fragment>
-                                                        );
-                                                    })}
-                                                </div>
-                                            )}
+                                                                    {/* 구간 길찾기 연결선 버튼 (A -> B) */}
+                                                                    {nextItem && (
+                                                                        <div className="flex items-center pl-2 py-0.5">
+                                                                            <a
+                                                                                href={U.getLegRouteMapUrl(item, nextItem, currentTrip.destination)}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-[#00A878] bg-white border border-slate-200 hover:border-[#00C48C] px-2.5 py-0.5 rounded-full shadow-2xs transition"
+                                                                            >
+                                                                                🚇 다음 장소 길찾기 ↗
+                                                                            </a>
+                                                                        </div>
+                                                                    )}
+                                                                </React.Fragment>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </section>
                                         </div>
                                     </div>
                                 )}
 
-                                {/* ==================== 2. 가계부 탭 ==================== */}
+                                {/* ==================== 2. 가계부 탭 (와이드 2단 분할: 좌 총지출+정산 / 우 일차별 지출) ==================== */}
                                 {activeTab === 'budget' && (
-                                    <div className="space-y-4">
-                                        {/* 한 줄 2열 나란히 배치: 총 지출 금액 + 1/N 정산 카드 */}
-                                        <div className="grid grid-cols-2 gap-2.5 sm:gap-4 items-stretch">
-                                            {/* 좌측 카드: 총 지출 & 예산 */}
-                                            <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 border border-slate-200 shadow-2xs flex flex-col justify-between gap-2.5 min-w-0">
-                                                <div className="space-y-1.5">
-                                                    <div className="flex items-center justify-between gap-1">
-                                                        <span className="text-[11px] sm:text-xs font-extrabold text-slate-400 truncate">총 지출 금액</span>
-                                                        <div className="flex items-center gap-1 shrink-0">
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setIsQuickCalcModalOpen(true)}
-                                                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-1.5 sm:px-2 py-1 rounded-lg text-[11px] font-extrabold"
-                                                                title="빠른 환율 계산기"
-                                                            >
-                                                                🧮<span className="hidden sm:inline ml-0.5">계산기</span>
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    const ok = U.exportExpensesToCSV(currentTrip, budgetSummary);
-                                                                    showToast(ok ? '📥 가계부 CSV(엑셀) 파일이 다운로드되었습니다.' : '❌ 파일 생성에 실패했습니다.');
-                                                                }}
-                                                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-1.5 sm:px-2 py-1 rounded-lg text-[11px] font-extrabold"
-                                                                title="엑셀(CSV) 다운로드"
-                                                            >
-                                                                📥<span className="hidden sm:inline ml-0.5">CSV</span>
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setIsRateModalOpen(true)}
-                                                                className="bg-emerald-50 hover:bg-emerald-100 text-[#00A878] border border-emerald-200 px-1.5 sm:px-2 py-1 rounded-lg text-[11px] font-extrabold"
-                                                                title="환율 설정"
-                                                            >
-                                                                💱<span className="hidden sm:inline ml-0.5">환율</span>
-                                                            </button>
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-start">
+                                        {/* 좌측 단 (모바일: 한 줄 2열 나란히 / 와이드 lg+: 좌측 5칸 고정 스택) */}
+                                        <aside className="lg:col-span-5 lg:sticky lg:top-16">
+                                            <div className="grid grid-cols-2 lg:grid-cols-1 gap-2.5 sm:gap-4 items-stretch">
+                                                {/* 카드 1: 총 지출 금액 & 예산 */}
+                                                <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 border border-slate-200 shadow-2xs flex flex-col justify-between gap-2.5 min-w-0">
+                                                    <div className="space-y-1.5">
+                                                        <div className="flex items-center justify-between gap-1">
+                                                            <span className="text-[11px] sm:text-xs font-extrabold text-slate-400 truncate">총 지출 금액</span>
+                                                            <div className="flex items-center gap-1 shrink-0">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setIsQuickCalcModalOpen(true)}
+                                                                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-1.5 sm:px-2 py-1 rounded-lg text-[11px] font-extrabold"
+                                                                    title="빠른 환율 계산기"
+                                                                >
+                                                                    🧮<span className="hidden sm:inline ml-0.5">계산기</span>
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        const ok = U.exportExpensesToCSV({ ...currentTrip, expenses: visibleExpenses }, budgetSummary);
+                                                                        showToast(ok ? '📥 가계부 CSV(엑셀) 파일이 다운로드되었습니다.' : '❌ 파일 생성에 실패했습니다.');
+                                                                    }}
+                                                                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-1.5 sm:px-2 py-1 rounded-lg text-[11px] font-extrabold"
+                                                                    title="엑셀(CSV) 다운로드"
+                                                                >
+                                                                    📥<span className="hidden sm:inline ml-0.5">CSV</span>
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setIsRateModalOpen(true)}
+                                                                    className="bg-emerald-50 hover:bg-emerald-100 text-[#00A878] border border-emerald-200 px-1.5 sm:px-2 py-1 rounded-lg text-[11px] font-extrabold"
+                                                                    title="환율 설정"
+                                                                >
+                                                                    💱<span className="hidden sm:inline ml-0.5">환율</span>
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="text-lg sm:text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight truncate">
+                                                            {budgetSummary.totalSpentKRW.toLocaleString()}<span className="text-xs sm:text-sm font-bold text-slate-500 ml-0.5">원</span>
+                                                        </div>
+
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {budgetSummary.totalSettledKRW > 0 && (
+                                                                <span className="inline-flex items-center text-[10px] sm:text-[11px] font-extrabold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full max-w-full truncate">
+                                                                    ✅ 중간정산 {budgetSummary.totalSettledKRW.toLocaleString()}원
+                                                                </span>
+                                                            )}
+                                                            {budgetSummary.privateSpentKRW > 0 && (
+                                                                <span className="inline-flex items-center text-[10px] sm:text-[11px] font-extrabold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full max-w-full truncate">
+                                                                    🔒 나만 보기 {budgetSummary.privateSpentKRW.toLocaleString()}원 포함
+                                                                </span>
+                                                            )}
                                                         </div>
                                                     </div>
 
-                                                    <div className="text-lg sm:text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight truncate">
-                                                        {budgetSummary.totalSpentKRW.toLocaleString()}<span className="text-xs sm:text-sm font-bold text-slate-500 ml-0.5">원</span>
+                                                    <div className="space-y-1 pt-2 border-t border-slate-100">
+                                                        <div className="flex flex-wrap justify-between gap-x-1 text-[10px] sm:text-xs font-bold">
+                                                            <span className="text-slate-400">예산 {Number(currentTrip.budgetKRW || 0).toLocaleString()}원</span>
+                                                            <span className={budgetSummary.remainingKRW >= 0 ? 'text-[#00A878]' : 'text-rose-500'}>
+                                                                {budgetSummary.remainingKRW >= 0
+                                                                    ? `${budgetSummary.remainingKRW.toLocaleString()}원 남음`
+                                                                    : `${Math.abs(budgetSummary.remainingKRW).toLocaleString()}원 초과`}
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                            <div
+                                                                className={`h-full rounded-full transition-all duration-300 ${budgetSummary.remainingKRW >= 0 ? 'bg-[#00C48C]' : 'bg-rose-500'}`}
+                                                                style={{ width: `${budgetSummary.budgetUsagePercent || 0}%` }}
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* 카드 2: 1/N 정산 요약 */}
+                                                <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 border border-slate-200 shadow-2xs flex flex-col justify-between gap-2.5 min-w-0">
+                                                    <div className="flex items-center justify-between gap-1">
+                                                        <span className="text-[11px] sm:text-xs font-extrabold text-slate-800 truncate">⚡ 1/N 정산</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setIsSettlementModalOpen(true)}
+                                                            className="bg-[#00C48C] hover:bg-[#00A878] text-white text-[10px] sm:text-xs font-extrabold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shrink-0"
+                                                        >
+                                                            상세·정산
+                                                        </button>
                                                     </div>
 
-                                                    {budgetSummary.totalSettledKRW > 0 && (
-                                                        <div className="inline-flex items-center text-[10px] sm:text-[11px] font-extrabold text-sky-700 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-full max-w-full truncate">
-                                                            ✅ 중간정산 {budgetSummary.totalSettledKRW.toLocaleString()}원
+                                                    {budgetSummary.transfers.length === 0 ? (
+                                                        <div className="flex-1 flex items-center justify-center bg-emerald-50 border border-emerald-200 rounded-xl sm:rounded-2xl p-2.5 text-center text-[11px] sm:text-xs font-extrabold text-[#00A878]">
+                                                            🎉 주고받을 차액 없음!
+                                                        </div>
+                                                    ) : (
+                                                        <div className="space-y-1.5 max-h-40 lg:max-h-56 overflow-y-auto pr-0.5 flex-1">
+                                                            {budgetSummary.transfers.map((t, idx) => (
+                                                                <div key={idx} className="bg-slate-50 border border-slate-200 rounded-xl px-2 sm:px-3 py-1.5 sm:py-2 flex items-center justify-between gap-1">
+                                                                    <div className="min-w-0">
+                                                                        <div className="text-[10px] sm:text-xs font-extrabold text-slate-800 truncate">
+                                                                            {t.from} ➔ {t.to}
+                                                                        </div>
+                                                                        <div className="text-[11px] sm:text-xs font-extrabold text-[#00A878]">
+                                                                            {t.amount.toLocaleString()}원
+                                                                        </div>
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleQuickSettle(t)}
+                                                                        className="text-[10px] sm:text-[11px] font-extrabold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 sm:px-2 py-1 rounded-lg shrink-0"
+                                                                        title="오늘 날짜로 정산 완료 처리"
+                                                                    >
+                                                                        완료
+                                                                    </button>
+                                                                </div>
+                                                            ))}
                                                         </div>
                                                     )}
                                                 </div>
-
-                                                <div className="space-y-1 pt-2 border-t border-slate-100">
-                                                    <div className="flex flex-wrap justify-between gap-x-1 text-[10px] sm:text-xs font-bold">
-                                                        <span className="text-slate-400">예산 {Number(currentTrip.budgetKRW || 0).toLocaleString()}원</span>
-                                                        <span className={budgetSummary.remainingKRW >= 0 ? 'text-[#00A878]' : 'text-rose-500'}>
-                                                            {budgetSummary.remainingKRW >= 0
-                                                                ? `${budgetSummary.remainingKRW.toLocaleString()}원 남음`
-                                                                : `${Math.abs(budgetSummary.remainingKRW).toLocaleString()}원 초과`}
-                                                        </span>
-                                                    </div>
-                                                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                                                        <div
-                                                            className={`h-full rounded-full transition-all duration-300 ${budgetSummary.remainingKRW >= 0 ? 'bg-[#00C48C]' : 'bg-rose-500'}`}
-                                                            style={{ width: `${budgetSummary.budgetUsagePercent || 0}%` }}
-                                                        ></div>
-                                                    </div>
-                                                </div>
                                             </div>
+                                        </aside>
 
-                                            {/* 우측 카드: 1/N 정산 요약 */}
-                                            <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 border border-slate-200 shadow-2xs flex flex-col justify-between gap-2.5 min-w-0">
-                                                <div className="flex items-center justify-between gap-1">
-                                                    <span className="text-[11px] sm:text-xs font-extrabold text-slate-800 truncate">⚡ 1/N 정산</span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setIsSettlementModalOpen(true)}
-                                                        className="bg-[#00C48C] hover:bg-[#00A878] text-white text-[10px] sm:text-xs font-extrabold px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl shrink-0"
-                                                    >
-                                                        상세·정산
-                                                    </button>
-                                                </div>
-
-                                                {budgetSummary.transfers.length === 0 ? (
-                                                    <div className="flex-1 flex items-center justify-center bg-emerald-50 border border-emerald-200 rounded-xl sm:rounded-2xl p-2.5 text-center text-[11px] sm:text-xs font-extrabold text-[#00A878]">
-                                                        🎉 주고받을 차액 없음!
-                                                    </div>
-                                                ) : (
-                                                    <div className="space-y-1.5 max-h-32 overflow-y-auto pr-0.5 flex-1">
-                                                        {budgetSummary.transfers.map((t, idx) => (
-                                                            <div key={idx} className="bg-slate-50 border border-slate-200 rounded-xl px-2 sm:px-3 py-1.5 sm:py-2 flex items-center justify-between gap-1">
-                                                                <div className="min-w-0">
-                                                                    <div className="text-[10px] sm:text-xs font-extrabold text-slate-800 truncate">
-                                                                        {t.from} ➔ {t.to}
-                                                                    </div>
-                                                                    <div className="text-[11px] sm:text-xs font-extrabold text-[#00A878]">
-                                                                        {t.amount.toLocaleString()}원
-                                                                    </div>
-                                                                </div>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleQuickSettle(t)}
-                                                                    className="text-[10px] sm:text-[11px] font-extrabold text-[#00A878] bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-1.5 sm:px-2 py-1 rounded-lg shrink-0"
-                                                                    title="오늘 날짜로 정산 완료 처리"
-                                                                >
-                                                                    완료
-                                                                </button>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-
-                                        {/* 지출 필터 & 지출 목록 */}
-                                        <div className="space-y-3">
+                                        {/* 우측 단 (와이드 lg+: 우측 7칸): 일차별 지출 필터 & 지출 리스트 */}
+                                        <section className="lg:col-span-7 space-y-3">
                                             <div className="flex flex-wrap items-center justify-between gap-2">
                                                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
                                                     <button
@@ -2460,7 +2588,7 @@
                                                             expenseDayFilter === 'all' ? 'bg-[#00C48C] text-white border-[#00C48C]' : 'bg-white text-slate-600 border-slate-200'
                                                         }`}
                                                     >
-                                                        전체 ({expenses.length})
+                                                        전체 ({visibleExpenses.length})
                                                     </button>
                                                     <button
                                                         type="button"
@@ -2510,6 +2638,8 @@
                                                         const meta = CATEGORY_META[exp.category] || CATEGORY_META.food || { emoji: '💰', label: '지출', color: 'text-slate-700 bg-slate-100 border-slate-200' };
                                                         const payer = companions.find(c => c.id === exp.payerId);
                                                         const krwAmount = B.toKRW(currentTrip, exp.amount, exp.currency, exp.day || 0);
+                                                        const isExpPrivate = Boolean(exp.isPrivate);
+                                                        const isExpExcluded = isExpPrivate || Boolean(exp.excludeFromSplit);
 
                                                         return (
                                                             <div key={exp.id} className="bg-white rounded-2xl p-3.5 sm:p-4 border border-slate-200 shadow-2xs hover:border-[#00C48C] transition flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
@@ -2520,6 +2650,16 @@
                                                                             <span className={`text-[11px] font-extrabold px-2 py-0.5 rounded-md ${Number(exp.day) === 0 ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-600'}`}>
                                                                                 {Number(exp.day) === 0 ? '사전 지출' : `${exp.day}일차`}
                                                                             </span>
+                                                                            {isExpPrivate && (
+                                                                                <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200">
+                                                                                    🔒 나만 보기
+                                                                                </span>
+                                                                            )}
+                                                                            {!isExpPrivate && isExpExcluded && (
+                                                                                <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+                                                                                    🎁 정산 제외
+                                                                                </span>
+                                                                            )}
                                                                             {exp.linkedPlaceName && (
                                                                                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-[#00A878] border border-emerald-200 truncate max-w-[170px]">
                                                                                     📍 {exp.linkedPlaceName}
@@ -2528,7 +2668,9 @@
                                                                             <h4 className="text-sm sm:text-base font-extrabold text-slate-800">{exp.title}</h4>
                                                                         </div>
                                                                         <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                                                                            <span>결제: <b>{payer ? `${payer.avatar} ${payer.name}` : '미지정'}</b> · 정산 {toArray(exp.splitWith).length}명 · {exp.method === 'cash' ? '💵 현금' : '💳 카드'}</span>
+                                                                            <span>
+                                                                                결제: <b>{payer ? `${payer.avatar} ${payer.name}` : '미지정'}</b> · {isExpExcluded ? '정산 제외' : `정산 ${toArray(exp.splitWith).length}명`} · {exp.method === 'cash' ? '💵 현금' : '💳 카드'}
+                                                                            </span>
                                                                             {(exp.hasReceipt || exp.receiptUrl) && (
                                                                                 <button
                                                                                     type="button"
@@ -2597,7 +2739,7 @@
                                                     })}
                                                 </div>
                                             )}
-                                        </div>
+                                        </section>
                                     </div>
                                 )}
 
