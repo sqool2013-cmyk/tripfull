@@ -1,12 +1,12 @@
 /**
  * ============================================================================
- * Tripfull v0.2.0 - 가계부 및 중간 정산 계산 엔진 (budget-engine.js)
+ * Tripfull v0.2.2 - 가계부 및 다회차 중간 정산 계산 엔진 (budget-engine.js)
  * ============================================================================
  * 역할:
  *  1. 통화별(1단위 / 100단위) 및 일자별(사전 지출·1일차~N일차) 적용 환율 계산
- *  2. 여행 총 지출 금액은 100% 보존하면서 이미 주고받은 금액만 상계하는
- *     '송금 원장(settlements) 기반 중간 정산' 1/N 최소 송금 알고리즘
- *  3. 원클릭 [송금 완료] 및 부분 금액 수동 송금 레코드 생성 헬퍼
+ *  2. 여행 총 지출 금액은 100% 보존하면서, 사람별·이체 날짜별·다회차로
+ *     이미 주고받은 송금 기록(settlements)만 누적 상계하는 1/N 최소 송금 알고리즘
+ *  3. 개별 정산 레코드 롤백(삭제) 시 정확히 원복되는 원장 기반 구조
  *  4. 카테고리별 지출 비중 및 일차별 지출 합계 통계 산출
  *
  * 의존성: window.TripfullUtils (utils.js)
@@ -16,9 +16,6 @@
 (function (global) {
     'use strict';
 
-    /**
-     * TripfullUtils에서 프리셋 통화/카테고리 정보를 안전하게 가져옵니다.
-     */
     function getPresetsSafe() {
         if (global.TripfullUtils && typeof global.TripfullUtils.getPresets === 'function') {
             return global.TripfullUtils.getPresets();
@@ -40,9 +37,6 @@
         };
     }
 
-    /**
-     * JPY/VND 구버전 1단위 환율을 100단위로 보정합니다.
-     */
     function normalizeRateSafe(currency, val) {
         if (global.TripfullUtils && typeof global.TripfullUtils.normalizeRateValue === 'function') {
             return global.TripfullUtils.normalizeRateValue(currency, val);
@@ -58,10 +52,6 @@
         return num;
     }
 
-    /**
-     * Firebase Realtime Database에서 배열이 객체({0:..., 1:...})나 null로 내려와도
-     * 안전하게 배열로 정규화합니다.
-     */
     function toArraySafe(raw) {
         if (!raw) return [];
         if (Array.isArray(raw)) return raw.filter(Boolean);
@@ -73,10 +63,6 @@
     // 1. 통화 · 일자별 환율 계산 및 원화(KRW) 환산
     // ========================================================================
 
-    /**
-     * 특정 여행, 통화, 일차(0: 사전 지출, 1~N: 여행 일차)에 적용할 유효 환율을 반환합니다.
-     * 우선순위: 일자별 개별 환율 > 통화별 기본 환율 > 여행 대표 환율 > 프리셋 기본 환율
-     */
     function getEffectiveRate(tripObj, currency, dayNum) {
         const targetDay = (dayNum === 0 || dayNum === '0') ? 0 : (Number(dayNum) || 1);
         if (!currency || currency === 'KRW') return 1;
@@ -85,19 +71,16 @@
         const fallbackRate = (presets.currencies[currency] && presets.currencies[currency].defaultRate) || 1;
         if (!tripObj) return fallbackRate;
 
-        // 1순위: 해당 일차의 개별 지정 환율
         const dayRates = (tripObj.dailyRates && tripObj.dailyRates[targetDay]) || {};
         if (dayRates[currency] && Number(dayRates[currency]) > 0) {
             return normalizeRateSafe(currency, dayRates[currency]);
         }
 
-        // 2순위: 여행 내 통화별 기본 환율
         const baseRates = tripObj.baseRates || {};
         if (baseRates[currency] && Number(baseRates[currency]) > 0) {
             return normalizeRateSafe(currency, baseRates[currency]);
         }
 
-        // 3순위: 여행 대표 통화 환율(레거시 호환)
         if (currency === tripObj.currency && tripObj.exchangeRate && Number(tripObj.exchangeRate) > 0) {
             return normalizeRateSafe(currency, tripObj.exchangeRate);
         }
@@ -105,9 +88,6 @@
         return fallbackRate;
     }
 
-    /**
-     * 외화 금액을 원화(KRW)로 환산합니다. (100엔, 100동 단위 자동 반영)
-     */
     function toKRW(tripObj, amount, currency, dayNum) {
         const numericAmount = Number(amount);
         if (!numericAmount || isNaN(numericAmount)) return 0;
@@ -120,11 +100,12 @@
     }
 
     // ========================================================================
-    // 2. 중간 정산(Settlements) 원장 레코드 관리 헬퍼
+    // 2. 다회차 · 날짜별 중간 정산(Settlements) 원장 관리 헬퍼
     // ========================================================================
 
     /**
-     * 여행 객체에서 중간 정산 송금 기록(settlements)을 최신순 배열로 반환합니다.
+     * 중간 정산 송금 기록을 이체 날짜(date) 최신순 -> 등록 시각(createdAt) 최신순으로 정렬합니다.
+     * (예: A가 수요일, B가 목요일에 이체한 기록이 날짜순으로 깔끔하게 구분됨)
      */
     function normalizeSettlements(rawSettlements) {
         return toArraySafe(rawSettlements)
@@ -132,6 +113,11 @@
                 return s && s.id && s.fromId && s.toId && Number(s.amountKRW) > 0;
             })
             .sort(function (a, b) {
+                const dateA = String(a.date || '');
+                const dateB = String(b.date || '');
+                if (dateA && dateB && dateA !== dateB) {
+                    return dateB.localeCompare(dateA);
+                }
                 return (b.createdAt || 0) - (a.createdAt || 0);
             });
     }
@@ -145,13 +131,14 @@
         const today = (global.TripfullUtils && global.TripfullUtils.getTodayIso)
             ? global.TripfullUtils.getTodayIso()
             : new Date().toISOString().slice(0, 10);
+        const cleanDate = (p.date && /^\d{4}-\d{2}-\d{2}$/.test(String(p.date))) ? String(p.date) : today;
 
         return {
             id: 'stl_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
             fromId: String(p.fromId || ''),
             toId: String(p.toId || ''),
             amountKRW: Math.max(0, Math.round(Number(p.amountKRW) || 0)),
-            date: p.date || today,
+            date: cleanDate,
             memo: String(p.memo || '중간 정산 송금').trim(),
             createdBy: String(p.createdBy || ''),
             createdAt: Date.now()
@@ -159,19 +146,9 @@
     }
 
     // ========================================================================
-    // 3. 핵심 1/N 정산 및 중간 정산 상계 알고리즘
+    // 3. 핵심 1/N 정산 및 다회차 중간 정산 상계 알고리즘
     // ========================================================================
 
-    /**
-     * 여행 전체의 가계부 지출 통계, 개인별 정산 현황(지출/부담/송금/수령/최종잔액),
-     * 그리고 중간 정산이 모두 반영된 최소 송금 가이드를 계산합니다.
-     *
-     * 핵심 공식:
-     *   Net_i = (Paid_i - Owed_i) + Sent_i - Received_i
-     *   - totalSpentKRW는 오직 expenses만 합산 (중간 정산과 무관하게 실제 여행 총액 보존)
-     *   - Net_i > 0: 앞으로 더 받아야 할 돈 (채권자)
-     *   - Net_i < 0: 앞으로 더 보내야 할 돈 (채무자)
-     */
     function calculateBudgetSummary(tripObj) {
         const emptyResult = {
             totalSpentKRW: 0,
@@ -202,12 +179,16 @@
             const owedByPerson = {};
             const sentByPerson = {};
             const receivedByPerson = {};
+            const sentCountByPerson = {};
+            const receivedCountByPerson = {};
 
             companions.forEach(function (c) {
                 paidByPerson[c.id] = 0;
                 owedByPerson[c.id] = 0;
                 sentByPerson[c.id] = 0;
                 receivedByPerson[c.id] = 0;
+                sentCountByPerson[c.id] = 0;
+                receivedCountByPerson[c.id] = 0;
             });
 
             // 1) 실제 지출(expenses) 집계
@@ -217,19 +198,14 @@
                 const krw = toKRW(tripObj, exp.amount, exp.currency, expDay);
                 totalSpentKRW += krw;
 
-                // 카테고리별 집계
                 const catKey = exp.category || 'etc';
                 categoryTotals[catKey] = (categoryTotals[catKey] || 0) + krw;
-
-                // 일차별 집계
                 dayTotals[expDay] = (dayTotals[expDay] || 0) + krw;
 
-                // 결제자 반영
                 if (paidByPerson[exp.payerId] !== undefined) {
                     paidByPerson[exp.payerId] += krw;
                 }
 
-                // 1/N 분담자 반영 (현재 여행 멤버에 존재하는 인원 기준)
                 const splitList = toArraySafe(exp.splitWith);
                 const validSplits = splitList.filter(function (cid) {
                     return owedByPerson[cid] !== undefined;
@@ -242,18 +218,18 @@
                 }
             });
 
-            // 2) 중간 정산 송금 기록(settlements) 반영
+            // 2) 다회차 중간 정산 송금 기록(settlements) 누적 반영
             settlements.forEach(function (stl) {
                 const amt = Math.round(Number(stl.amountKRW) || 0);
-                if (amt <= 0) return;
-                // 본인에게 보내는 잘못된 레코드 방지
-                if (stl.fromId === stl.toId) return;
+                if (amt <= 0 || stl.fromId === stl.toId) return;
 
                 const hasFrom = sentByPerson[stl.fromId] !== undefined;
                 const hasTo = receivedByPerson[stl.toId] !== undefined;
                 if (hasFrom && hasTo) {
                     sentByPerson[stl.fromId] += amt;
                     receivedByPerson[stl.toId] += amt;
+                    sentCountByPerson[stl.fromId] += 1;
+                    receivedCountByPerson[stl.toId] += 1;
                     totalSettledKRW += amt;
                 }
             });
@@ -271,12 +247,14 @@
                     id: c.id,
                     name: c.name,
                     avatar: c.avatar || '✈️',
-                    paid: paid,          // 가계부에서 직접 결제한 총액
-                    owed: owed,          // 여행 전체에서 부담해야 할 내 몫
-                    sent: sent,          // 중간 정산으로 이미 보낸 금액
-                    received: received,  // 중간 정산으로 이미 받은 금액
-                    rawNet: rawNet,      // 중간 정산 전 순차액
-                    net: net             // 중간 정산 반영 후 최종 남은 차액
+                    paid: paid,
+                    owed: owed,
+                    sent: sent,
+                    received: received,
+                    sentCount: sentCountByPerson[c.id] || 0,
+                    receivedCount: receivedCountByPerson[c.id] || 0,
+                    rawNet: rawNet,
+                    net: net
                 };
             });
 
@@ -318,7 +296,6 @@
                 if (c.amount <= 10) j++;
             }
 
-            // 5) 예산 대비 지출 비율 & 카테고리 비중 산출
             const budgetKRW = Number(tripObj.budgetKRW) || 0;
             const remainingKRW = budgetKRW - totalSpentKRW;
             const budgetUsagePercent = budgetKRW > 0
@@ -345,9 +322,6 @@
         }
     }
 
-    /**
-     * 카테고리별 지출 합계를 비중(%) 순으로 정렬된 리스트로 변환합니다.
-     */
     function getCategoryBreakdown(categoryTotals, totalSpentKRW) {
         const presets = getPresetsSafe();
         const catMeta = presets.categoryMeta || {};
@@ -375,9 +349,6 @@
             });
     }
 
-    /**
-     * 가계부에서 특정 필터('all', '0', '1', ...)에 해당하는 지출의 원화 합계를 반환합니다.
-     */
     function getFilteredExpenseTotalKRW(tripObj, filteredExpenses) {
         if (!tripObj || !Array.isArray(filteredExpenses)) return 0;
         return filteredExpenses.reduce(function (sum, exp) {
@@ -387,7 +358,6 @@
         }, 0);
     }
 
-    // 전역 네임스페이스 등록
     global.TripfullBudget = {
         getEffectiveRate: getEffectiveRate,
         toKRW: toKRW,
