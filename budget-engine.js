@@ -1,13 +1,16 @@
 /**
  * ============================================================================
- * Tripfull v0.2.2 - 가계부 및 다회차 중간 정산 계산 엔진 (budget-engine.js)
+ * Tripfull v0.2.2-b - 가계부 및 다회차 중간 정산 계산 엔진 (budget-engine.js)
  * ============================================================================
  * 역할:
  *  1. 통화별(1단위 / 100단위) 및 일자별(사전 지출·1일차~N일차) 적용 환율 계산
- *  2. 여행 총 지출 금액은 100% 보존하면서, 사람별·이체 날짜별·다회차로
+ *  2. 지출 가시성 및 정산 제외 처리:
+ *     - isPrivate (나만 보기): 작성자 본인(ownerUserKey)에게만 노출, 1/N 정산 무조건 제외
+ *     - excludeFromSplit (정산 제외): 전원에게 노출 및 총 지출 포함, 1/N 정산에서만 제외
+ *  3. 여행 총 지출 금액은 100% 보존하면서, 사람별·이체 날짜별·다회차로
  *     이미 주고받은 송금 기록(settlements)만 누적 상계하는 1/N 최소 송금 알고리즘
- *  3. 개별 정산 레코드 롤백(삭제) 시 정확히 원복되는 원장 기반 구조
- *  4. 카테고리별 지출 비중 및 일차별 지출 합계 통계 산출
+ *  4. 개별 정산 레코드 롤백(삭제) 시 정확히 원복되는 원장 기반 구조
+ *  5. 카테고리별 지출 비중 및 일차별 지출 합계 통계 산출
  *
  * 의존성: window.TripfullUtils (utils.js)
  * 전역 노출: window.TripfullBudget
@@ -22,9 +25,9 @@
         }
         return {
             currencies: {
-                KRW: { symbol: '₩', name: '대한민국 원 (KRW)', unit: 1, defaultRate: 1 },
-                JPY: { symbol: '¥', name: '일본 엔 (JPY)', unit: 100, defaultRate: 905 },
-                USD: { symbol: '$', name: '미국 달러 (USD)', unit: 1, defaultRate: 1380 }
+                KRW: { symbol: '₩', name: '대한민국 원 (원)', unit: 1, defaultRate: 1 },
+                JPY: { symbol: '¥', name: '일본 엔 (엔)', unit: 100, defaultRate: 905 },
+                USD: { symbol: '$', name: '미국 달러 (달러)', unit: 1, defaultRate: 1380 }
             },
             categoryMeta: {
                 sightseeing: { label: '관광', emoji: '🎡' },
@@ -35,6 +38,14 @@
                 etc: { label: '기타', emoji: '📌' }
             }
         };
+    }
+
+    function sanitizeKeySafe(str) {
+        if (!str) return '';
+        if (global.TripfullUtils && typeof global.TripfullUtils.sanitizeKey === 'function') {
+            return global.TripfullUtils.sanitizeKey(str);
+        }
+        return String(str).trim().toLowerCase().replace(/[.#$/[\]\s]/g, '_');
     }
 
     function normalizeRateSafe(currency, val) {
@@ -57,6 +68,23 @@
         if (Array.isArray(raw)) return raw.filter(Boolean);
         if (typeof raw === 'object') return Object.values(raw).filter(Boolean);
         return [];
+    }
+
+    // ========================================================================
+    // 0. 지출 가시성 판별 (나만 보기 격리)
+    // ========================================================================
+
+    /**
+     * 해당 지출 항목이 현재 로그인한 사용자(activeUserKey)에게 보여도 되는지 반환합니다.
+     * - isPrivate가 true인 경우, 작성자 본인(ownerUserKey)에게만 표시됩니다.
+     */
+    function isExpenseVisibleToUser(exp, activeUserKey) {
+        if (!exp) return false;
+        if (!exp.isPrivate) return true;
+        const viewerKey = sanitizeKeySafe(activeUserKey);
+        const ownerKey = sanitizeKeySafe(exp.ownerUserKey);
+        if (!viewerKey || !ownerKey) return false;
+        return viewerKey === ownerKey;
     }
 
     // ========================================================================
@@ -103,10 +131,6 @@
     // 2. 다회차 · 날짜별 중간 정산(Settlements) 원장 관리 헬퍼
     // ========================================================================
 
-    /**
-     * 중간 정산 송금 기록을 이체 날짜(date) 최신순 -> 등록 시각(createdAt) 최신순으로 정렬합니다.
-     * (예: A가 수요일, B가 목요일에 이체한 기록이 날짜순으로 깔끔하게 구분됨)
-     */
     function normalizeSettlements(rawSettlements) {
         return toArraySafe(rawSettlements)
             .filter(function (s) {
@@ -122,10 +146,6 @@
             });
     }
 
-    /**
-     * 새로운 중간 정산 송금 기록 객체를 생성합니다.
-     * @param {object} params - { fromId, toId, amountKRW, memo, date, createdBy }
-     */
     function createSettlementRecord(params) {
         const p = params || {};
         const today = (global.TripfullUtils && global.TripfullUtils.getTodayIso)
@@ -149,9 +169,12 @@
     // 3. 핵심 1/N 정산 및 다회차 중간 정산 상계 알고리즘
     // ========================================================================
 
-    function calculateBudgetSummary(tripObj) {
+    function calculateBudgetSummary(tripObj, activeUserKey) {
         const emptyResult = {
             totalSpentKRW: 0,
+            sharedTotalSpentKRW: 0,
+            privateSpentKRW: 0,
+            excludedSplitSpentKRW: 0,
             totalSettledKRW: 0,
             remainingKRW: (tripObj && Number(tripObj.budgetKRW)) || 0,
             budgetUsagePercent: 0,
@@ -167,10 +190,16 @@
 
         try {
             const companions = toArraySafe(tripObj.companions);
-            const expenses = toArraySafe(tripObj.expenses);
+            const allExpenses = toArraySafe(tripObj.expenses);
+            const visibleExpenses = allExpenses.filter(function (exp) {
+                return isExpenseVisibleToUser(exp, activeUserKey);
+            });
             const settlements = normalizeSettlements(tripObj.settlements);
 
             let totalSpentKRW = 0;
+            let sharedTotalSpentKRW = 0;
+            let privateSpentKRW = 0;
+            let excludedSplitSpentKRW = 0;
             let totalSettledKRW = 0;
             const categoryTotals = {};
             const dayTotals = {};
@@ -191,16 +220,30 @@
                 receivedCountByPerson[c.id] = 0;
             });
 
-            // 1) 실제 지출(expenses) 집계
-            expenses.forEach(function (exp) {
+            // 1) 현재 사용자에게 보이는 지출(visibleExpenses) 집계
+            visibleExpenses.forEach(function (exp) {
                 if (!exp) return;
                 const expDay = (exp.day === 0 || exp.day === '0') ? 0 : (Number(exp.day) || 1);
                 const krw = toKRW(tripObj, exp.amount, exp.currency, expDay);
+                const isPrivate = Boolean(exp.isPrivate);
+                const isExcludedFromSplit = isPrivate || Boolean(exp.excludeFromSplit);
+
                 totalSpentKRW += krw;
+                if (isPrivate) {
+                    privateSpentKRW += krw;
+                } else {
+                    sharedTotalSpentKRW += krw;
+                }
+                if (isExcludedFromSplit) {
+                    excludedSplitSpentKRW += krw;
+                }
 
                 const catKey = exp.category || 'etc';
                 categoryTotals[catKey] = (categoryTotals[catKey] || 0) + krw;
                 dayTotals[expDay] = (dayTotals[expDay] || 0) + krw;
+
+                // 나만 보기(isPrivate) 또는 정산 제외(excludeFromSplit) 항목은 1/N 정산 계산에서 완전히 제외
+                if (isExcludedFromSplit) return;
 
                 if (paidByPerson[exp.payerId] !== undefined) {
                     paidByPerson[exp.payerId] += krw;
@@ -306,6 +349,9 @@
 
             return {
                 totalSpentKRW: totalSpentKRW,
+                sharedTotalSpentKRW: sharedTotalSpentKRW,
+                privateSpentKRW: privateSpentKRW,
+                excludedSplitSpentKRW: excludedSplitSpentKRW,
                 totalSettledKRW: totalSettledKRW,
                 remainingKRW: remainingKRW,
                 budgetUsagePercent: budgetUsagePercent,
@@ -361,6 +407,7 @@
     global.TripfullBudget = {
         getEffectiveRate: getEffectiveRate,
         toKRW: toKRW,
+        isExpenseVisibleToUser: isExpenseVisibleToUser,
         normalizeSettlements: normalizeSettlements,
         createSettlementRecord: createSettlementRecord,
         calculateBudgetSummary: calculateBudgetSummary,
