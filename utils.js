@@ -1,14 +1,14 @@
 /**
  * ============================================================================
- * Tripfull v0.2.0 - 공통 유틸리티 모듈 (utils.js)
+ * Tripfull v0.2.2 - 공통 유틸리티 모듈 (utils.js)
  * ============================================================================
  * 역할:
  *  1. presets.json 마스터 데이터 보관 및 안전한 폴백 제공
  *  2. Firebase 키 정제 및 SHA-256 단방향 해시 / 무유출 경로 키 생성
- *  3. 한국식 날짜 표기(yyyy. m. d.(요일) / m. d.(요일)) 및 여행 일차 계산
+ *  3. 한국식 날짜 표기(yyyy. m. d.(요일) / m. d.(요일)), D-Day 배지 및 여행 일차 계산
  *  4. 2026. 7. 1. 행정체제 개편(영종구·제물포구·검단구·서해구, 전남광주통합특별시) 주소 정제
- *  5. OpenStreetMap 주소 검색 및 구글 지도 단일 위치·전체 동선 URL 생성
- *  6. 초대코드 생성, 클립보드 복사, 카카오톡 공유 요약본 생성
+ *  5. OpenStreetMap 주소 검색 및 구글 지도 단일 위치·구간 길찾기·전체 동선 URL 생성
+ *  6. 초대코드 생성, 일정 시간순 정렬, 예약 URL 안전 검증, CSV 다운로드, 영수증 이미지 압축
  * ============================================================================
  */
 (function (global) {
@@ -16,16 +16,16 @@
 
     // presets.json 로드 전/실패 시에도 앱이 깨지지 않도록 최소 기본값 유지
     const FALLBACK_PRESETS = {
-        schemaVersion: '0.2.0',
+        schemaVersion: '0.2.2',
         daysKr: ['일', '월', '화', '수', '목', '금', '토'],
-        avatarOptions: ['✈️', '🧳', '🗺️', '📸', '🏖️', '⛰️', '🍜', '☕', '🛍️', '🕶️', '⛺', '🌟'],
-        categoryMeta: {
-            sightseeing: { label: '관광', emoji: '🎡', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-            food: { label: '식당/카페', emoji: '🍽️', color: 'text-orange-700 bg-orange-50 border-orange-200' },
-            shopping: { label: '쇼핑', emoji: '🛍️', color: 'text-pink-700 bg-pink-50 border-pink-200' },
-            transport: { label: '교통/항공', emoji: '✈️', color: 'text-sky-700 bg-sky-50 border-sky-200' },
-            hotel: { label: '숙소', emoji: '🏨', color: 'text-purple-700 bg-purple-50 border-purple-200' },
-            etc: { label: '기타', emoji: '📌', color: 'text-slate-700 bg-slate-100 border-slate-200' }
+        avatarOptions: [
+            '✈️', '🛫', '🚄', '🚗', '🚌', '🚢',
+            '⛴️', '🚠', '🚲', '🎈', '🧳', '🎒',
+            '🗺️', '🧭', '📸', '🎫', '🕶️', '👒',
+            '🏖️', '🏝️', '⛰️', '🗻', '⛺', '🏙️',
+            '🗼', '🗽', '🏰', '🎡', '⛩️', '🌅',
+            '🍜', '🍣', '☕', '🍻', '🛍️', '🌟'
+        ],
         },
         currencies: {
             KRW: { symbol: '₩', name: '대한민국 원 (KRW)', unit: 1, defaultRate: 1 },
@@ -68,7 +68,7 @@
      * @returns {Promise<object>} 로드된 프리셋 객체
      */
     async function loadPresets(url) {
-        const targetUrl = url || './presets.json?v=0.2.0';
+        const targetUrl = url || './presets.json?v=0.2.2';
         try {
             const res = await fetch(targetUrl, { cache: 'no-cache' });
             if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -243,6 +243,41 @@
         const arr = [];
         for (let i = 1; i <= maxDay; i++) arr.push(i);
         return arr;
+    }
+
+    /**
+     * 여행 출발일·도착일과 오늘 날짜(로컬 기준)를 비교해 D-Day / 진행 상태 배지를 반환합니다.
+     * @returns {{ label: string, tone: 'upcoming'|'active'|'done' } | null}
+     */
+    function getTripStatusBadge(tripObj) {
+        if (!tripObj || !tripObj.startDate) return null;
+        const sParts = String(tripObj.startDate).split('-').map(Number);
+        const eParts = String(tripObj.endDate || tripObj.startDate).split('-').map(Number);
+        const tParts = getTodayIso().split('-').map(Number);
+        if (sParts.length !== 3 || eParts.length !== 3 || tParts.length !== 3) return null;
+
+        const startDt = new Date(sParts[0], sParts[1] - 1, sParts[2]);
+        const endDt = new Date(eParts[0], eParts[1] - 1, eParts[2]);
+        const todayDt = new Date(tParts[0], tParts[1] - 1, tParts[2]);
+        if (isNaN(startDt.getTime()) || isNaN(endDt.getTime())) return null;
+
+        const diffToStart = Math.round((startDt - todayDt) / 86400000);
+        const diffFromEnd = Math.round((todayDt - endDt) / 86400000);
+
+        if (diffToStart > 0) {
+            return { label: 'D-' + diffToStart, tone: 'upcoming' };
+        }
+        if (diffFromEnd > 0) {
+            return { label: '여행 완료', tone: 'done' };
+        }
+        const dayIdx = Math.round((todayDt - startDt) / 86400000) + 1;
+        if (dayIdx === 1) {
+            return {
+                label: tripObj.startDate === tripObj.endDate ? 'D-DAY' : 'D-DAY · 1일차',
+                tone: 'active'
+            };
+        }
+        return { label: '여행 ' + dayIdx + '일차', tone: 'active' };
     }
 
     /**
@@ -468,6 +503,24 @@
             '&travelmode=transit';
     }
 
+    /**
+     * 인접한 두 일정 장소(A -> B) 간의 구글 지도 구간 길찾기 URL을 생성합니다.
+     */
+    function getLegRouteMapUrl(fromItem, toItem, tripDestination) {
+        if (!fromItem || !toItem) return '#';
+        const buildQuery = function (item) {
+            const q = item.address
+                ? (item.place + ' ' + item.address)
+                : (item.place + ' ' + (tripDestination || ''));
+            return encodeURIComponent(q.trim());
+        };
+        return 'https://www.google.com/maps/dir/?api=1&origin=' + buildQuery(fromItem) +
+            '&destination=' + buildQuery(toItem) +
+            '&travelmode=transit';
+    }
+
+    // ========================================================================
+    // 4. 초대코드, 클립보드, 공유 요약문, 정렬, URL 검증, CSV 및 이미지 압축
     // ========================================================================
     // 4. 초대코드, 클립보드, 공유 요약문 생성 유틸리티
     // ========================================================================
@@ -568,6 +621,224 @@
         return text;
     }
 
+    /**
+     * 예약 확인서·바우처·구글 드라이브 등 외부 참고 링크를 안전하게 정규화합니다.
+     * (javascript:/data: 등 위험 프로토콜 차단, http(s) 누락 시 자동 보완)
+     */
+    function normalizeExternalUrl(rawUrl) {
+        const trimmed = String(rawUrl || '').trim();
+        if (!trimmed) return '';
+        if (/^(javascript|data|vbscript):/i.test(trimmed)) return '';
+        if (/^https?:\/\//i.test(trimmed)) return trimmed;
+        return 'https://' + trimmed;
+    }
+
+    /**
+     * 일차별 일정 목록을 방문 시각(HH:MM) 오름차순으로 안정 정렬합니다.
+     * 시각이 비어 있는 일정은 기존 순서를 유지한 채 맨 아래에 배치합니다.
+     */
+    function sortItineraryItems(items) {
+        if (!Array.isArray(items)) return [];
+        return items
+            .map(function (item, index) { return { item: item, index: index }; })
+            .sort(function (a, b) {
+                const tA = String((a.item && a.item.time) || '').trim();
+                const tB = String((b.item && b.item.time) || '').trim();
+                if (tA && tB) {
+                    const cmp = tA.localeCompare(tB);
+                    return cmp !== 0 ? cmp : (a.index - b.index);
+                }
+                if (tA && !tB) return -1;
+                if (!tA && tB) return 1;
+                return a.index - b.index;
+            })
+            .map(function (entry) { return entry.item; });
+    }
+
+    /**
+     * 가계부 지출 내역 및 정산 요약을 한글 깨짐 없는 UTF-8 BOM CSV(엑셀) 파일로 내려받습니다.
+     * @returns {boolean} 다운로드 성공 여부
+     */
+    function exportExpensesToCSV(tripObj, budgetSummary) {
+        if (!tripObj) return false;
+        try {
+            const categoryMeta = activePresets.categoryMeta || FALLBACK_PRESETS.categoryMeta;
+            const companions = Array.isArray(tripObj.companions)
+                ? tripObj.companions
+                : Object.values(tripObj.companions || {}).filter(Boolean);
+            const expenses = Array.isArray(tripObj.expenses)
+                ? tripObj.expenses
+                : Object.values(tripObj.expenses || {}).filter(Boolean);
+            const budgetApi = global.TripfullBudget;
+
+            const esc = function (val) {
+                const s = String(val === undefined || val === null ? '' : val);
+                return '"' + s.replace(/"/g, '""') + '"';
+            };
+
+            const findCompName = function (cid) {
+                const found = companions.find(function (c) { return c && c.id === cid; });
+                return found ? found.name : '미지정';
+            };
+
+            const rows = [];
+            rows.push([
+                '시점', '날짜', '카테고리', '지출 항목명', '연동 장소',
+                '결제 금액', '통화', '원화 환산(KRW)', '결제자', '정산 대상',
+                '결제 수단', '영수증/링크', '기록자'
+            ].map(esc).join(','));
+
+            expenses.forEach(function (exp) {
+                if (!exp) return;
+                const expDay = Number(exp.day) || 0;
+                const dayLabel = expDay === 0 ? '사전 지출' : (expDay + '일차');
+                const dateLabel = expDay === 0 ? '' : getDayDateDot(tripObj.startDate, expDay, true);
+                const catLabel = (categoryMeta[exp.category] && categoryMeta[exp.category].label) || '기타';
+                const krw = (budgetApi && typeof budgetApi.toKRW === 'function')
+                    ? budgetApi.toKRW(tripObj, exp.amount, exp.currency, expDay)
+                    : Number(exp.amount || 0);
+                const splitList = Array.isArray(exp.splitWith)
+                    ? exp.splitWith
+                    : Object.values(exp.splitWith || {}).filter(Boolean);
+                const splitNames = splitList.map(findCompName).join(' / ');
+                const methodLabel = exp.method === 'cash' ? '현금' : '카드';
+                const receiptNote = exp.receiptUrl
+                    ? exp.receiptUrl
+                    : (exp.hasReceipt ? '앱 내 영수증 사진 첨부됨' : '');
+
+                rows.push([
+                    dayLabel,
+                    dateLabel,
+                    catLabel,
+                    exp.title || '',
+                    exp.linkedPlaceName || '',
+                    Number(exp.amount || 0),
+                    exp.currency || 'KRW',
+                    krw,
+                    findCompName(exp.payerId),
+                    splitNames,
+                    methodLabel,
+                    receiptNote,
+                    exp.updatedBy || ''
+                ].map(esc).join(','));
+            });
+
+            if (budgetSummary) {
+                rows.push('');
+                rows.push(['[가계부 요약]', '총 지출(KRW)', Number(budgetSummary.totalSpentKRW || 0)].map(esc).join(','));
+                rows.push(['[가계부 요약]', '중간 정산 완료액(KRW)', Number(budgetSummary.totalSettledKRW || 0)].map(esc).join(','));
+                if (Array.isArray(budgetSummary.settlements) && budgetSummary.settlements.length > 0) {
+                    rows.push('');
+                    rows.push(['[중간 정산 이력]', '이체 날짜', '보낸 사람', '받은 사람', '송금액(KRW)', '메모'].map(esc).join(','));
+                    budgetSummary.settlements.forEach(function (stl) {
+                        rows.push([
+                            '중간 정산',
+                            stl.date || '',
+                            findCompName(stl.fromId),
+                            findCompName(stl.toId),
+                            Number(stl.amountKRW || 0),
+                            stl.memo || ''
+                        ].map(esc).join(','));
+                    });
+                }
+                if (Array.isArray(budgetSummary.transfers) && budgetSummary.transfers.length > 0) {
+                    rows.push('');
+                    rows.push(['[남은 송금 가이드]', '보낼 사람', '받을 사람', '남은 금액(KRW)'].map(esc).join(','));
+                    budgetSummary.transfers.forEach(function (t) {
+                        rows.push(['남은 정산', t.from, t.to, Number(t.amount || 0)].map(esc).join(','));
+                    });
+                }
+            }
+
+            const csvContent = '\uFEFF' + rows.join('\r\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const safeTitle = String(tripObj.title || 'trip').replace(/[\\/:*?"<>|]/g, '_').slice(0, 30);
+            const filename = 'Tripfull_' + safeTitle + '_' + getTodayIso() + '.csv';
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+            return true;
+        } catch (err) {
+            console.error('[TripfullUtils] CSV 내보내기 실패:', err);
+            return false;
+        }
+    }
+
+    /**
+     * 영수증 등 이미지 파일을 브라우저에서 초경량 JPEG Data URL(약 50~100KB)로 압축합니다.
+     * 영수증 특성상 세로로 긴 이미지도 글자가 깨지지 않도록 최대 폭 900px, 최대 높이 1600px을 유지합니다.
+     * @returns {Promise<{ dataUrl: string, sizeKB: number, width: number, height: number }>}
+     */
+    function compressImageToDataUrl(file, maxWidth, quality) {
+        return new Promise(function (resolve, reject) {
+            if (!file) {
+                reject(new Error('이미지 파일이 선택되지 않았습니다.'));
+                return;
+            }
+            const isImgType = !file.type || /^image\//i.test(file.type);
+            if (!isImgType) {
+                reject(new Error('이미지 파일(JPG, PNG, WEBP 등)만 첨부할 수 있습니다.'));
+                return;
+            }
+
+            const targetMaxW = maxWidth || 900;
+            const targetMaxH = 1600;
+            const targetQuality = quality || 0.72;
+
+            const reader = new FileReader();
+            reader.onerror = function () {
+                reject(new Error('이미지 파일을 읽는 중 오류가 발생했습니다.'));
+            };
+            reader.onload = function (ev) {
+                const img = new Image();
+                img.onerror = function () {
+                    reject(new Error('이미지를 불러올 수 없습니다. 다른 사진으로 시도해주세요.'));
+                };
+                img.onload = function () {
+                    try {
+                        let w = img.naturalWidth || img.width;
+                        let h = img.naturalHeight || img.height;
+                        const scale = Math.min(1, targetMaxW / w, targetMaxH / h);
+                        w = Math.max(1, Math.round(w * scale));
+                        h = Math.max(1, Math.round(h * scale));
+
+                        const canvas = document.createElement('canvas');
+                        canvas.width = w;
+                        canvas.height = h;
+                        const ctx = canvas.getContext('2d');
+                        // 투명 PNG 배경을 흰색으로 채워 영수증 가독성 유지
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, w, h);
+                        ctx.drawImage(img, 0, 0, w, h);
+
+                        let dataUrl = canvas.toDataURL('image/jpeg', targetQuality);
+                        // 압축 후에도 320KB를 넘으면 한 번 더 경량화
+                        if (dataUrl.length > 440000) {
+                            dataUrl = canvas.toDataURL('image/jpeg', 0.52);
+                        }
+                        const approxBytes = Math.round((dataUrl.length * 3) / 4);
+                        resolve({
+                            dataUrl: dataUrl,
+                            sizeKB: Math.max(1, Math.round(approxBytes / 1024)),
+                            width: w,
+                            height: h
+                        });
+                    } catch (cErr) {
+                        reject(new Error('이미지 압축 처리에 실패했습니다.'));
+                    }
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
     // 전역 네임스페이스 등록
     global.TripfullUtils = {
         loadPresets: loadPresets,
@@ -581,6 +852,7 @@
         formatDateDot: formatDateDot,
         getDayDateDot: getDayDateDot,
         getTripDayNumbers: getTripDayNumbers,
+        getTripStatusBadge: getTripStatusBadge,
         detectCountryMeta: detectCountryMeta,
         getLocalTimeInfo: getLocalTimeInfo,
         normalizeRateValue: normalizeRateValue,
@@ -589,8 +861,13 @@
         searchAddressNominatim: searchAddressNominatim,
         getSinglePlaceMapUrl: getSinglePlaceMapUrl,
         getDayRouteMapUrl: getDayRouteMapUrl,
+        getLegRouteMapUrl: getLegRouteMapUrl,
         generateUniqueShareCode: generateUniqueShareCode,
         copyToClipboard: copyToClipboard,
-        generateCleanShareSummary: generateCleanShareSummary
+        generateCleanShareSummary: generateCleanShareSummary,
+        normalizeExternalUrl: normalizeExternalUrl,
+        sortItineraryItems: sortItineraryItems,
+        exportExpensesToCSV: exportExpensesToCSV,
+        compressImageToDataUrl: compressImageToDataUrl
     };
 })(window);
