@@ -1,20 +1,28 @@
 /**
  * ============================================================================
- * Tripfull v0.2.2 - 전체 모달 UI 컴포넌트 모음 (modals.jsx)
+ * Tripfull v0.2.2 - 전체 모달 UI 컴포넌트 모음 (modals.jsx · 무누락 완전판)
  * ============================================================================
- * 역할:
- *  1. 날짜 입력기(CustomDateInput - iOS/iPadOS 프레임 이탈 방지)
- *  2. 보안 확인, 삭제 경고 확인, 체크리스트 항목 수정 모달
- *  3. 로그인, 내 프로필 수정(여행 테마 이모지 36종 그리드), 관리자용 사용자 관리 모달
- *  4. 멤버 초대/관리, 장소 추가/수정(비용·예약 링크), 항공·숙소 자동 등록 모달
- *  5. 지출 추가/수정(일정 장소 드롭다운 연동·영수증 사진 초경량 첨부·외부 링크)
- *  6. 영수증 지연 로딩 뷰어 모달, 빠른 환율 계산기 모달
- *  7. 새 여행 만들기, 여행 수정, 통화·일자별 환율 설정 모달
- *  8. 상세 정산 & 다회차·날짜별 중간 정산 및 롤백 관리 모달
- *  9. 일정·정산 공유, 내 여행 보관함(D-Day 배지), 초대 코드 입력 모달
- *
- * 의존성: React 18, window.TripfullUtils (utils.js), window.TripfullBudget, window.TripfullAPI
- * 전역 노출: window.TripfullModals
+ * 포함 모달 목록 (총 20종):
+ *  0. CustomDateInput      - iOS/Safari 그리드 이탈 방지 커스텀 날짜 입력기
+ *  1. SecurityCheckModal   - 민감 작업용 비밀번호 확인 모달
+ *  2. EditCheckItemModal   - 준비물 체크리스트 항목 이름 수정 모달
+ *  3. ConfirmDialogModal   - iframe 호환 커스텀 확인/경고 모달
+ *  4. LoginModal           - 사용자 로그인 / 새 계정 시작 (여행 이모지 36종)
+ *  5. EditMyProfileModal   - 내 프로필 및 비밀번호 수정 (여행 이모지 36종)
+ *  6. UserManageModal      - 총괄 관리자용 사용자 권한/초기화/삭제 모달
+ *  7. MemberModal          - 동행자 멤버 추가/제거/초대코드 관리 모달
+ *  8. PlaceModal           - 일정 장소 추가/수정 (비용·예약 링크·주소 검색)
+ *  9. ExpenseModal         - 가계부 지출 추가/수정 (일정 장소 연동·영수증 첨부)
+ * 10. NewTripModal         - 새 여행 플래너 생성 모달
+ * 11. EditTripModal        - 현재 여행 기본 설정 수정 모달
+ * 12. RateModal            - 통화별 기준 환율 및 일자별 환율 설정 모달
+ * 13. SettlementModal      - 상세 정산 · 날짜별/다회차 중간 정산 & 롤백 모달
+ * 14. ShareModal           - 일정·정산 텍스트 및 초대코드 공유 모달
+ * 15. TripListModal        - 내 여행 보관함 (개인/공유 분류 + D-Day 배지)
+ * 16. JoinCodeModal        - TRIP- 초대코드 참여 모달
+ * 17. FlightHotelModal     - 항공편(편도/왕복) · 숙소(전체/일부) 자동 일정 배치
+ * 18. ReceiptViewerModal   - 영수증 사진 지연 로딩 뷰어 모달
+ * 19. QuickCalcModal       - 빠른 환율 계산기 모달
  * ============================================================================
  */
 (function (global) {
@@ -22,9 +30,6 @@
 
     const { useState, useRef, useEffect } = React;
 
-    /**
-     * TripfullUtils와 프리셋 데이터를 안전하게 가져오는 내부 헬퍼
-     */
     function getU() {
         return global.TripfullUtils || {};
     }
@@ -64,6 +69,141 @@
     // ========================================================================
     // 0. 공통 커스텀 날짜 선택기 (Safari / 모바일 그리드 이탈 원천 차단)
     // ========================================================================
+    function CustomDateInput({ value, onChange, required, className }) {
+        const U = getU();
+        const displayLabel = U.formatDateDot ? U.formatDateDot(value, true) : (value || '날짜 선택');
+        return (
+            <div className={`relative overflow-hidden bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 flex items-center justify-between gap-1 ${className || ''}`}>
+                <span className={`text-xs font-extrabold truncate ${value ? 'text-slate-800' : 'text-slate-400'}`}>
+                    {displayLabel}
+                </span>
+                <span className="text-xs text-slate-400 shrink-0">📅</span>
+                <input
+                    type="date"
+                    value={value || ''}
+                    onChange={onChange}
+                    required={required}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 1. 보안 확인 모달
+    // ========================================================================
+    function SecurityCheckModal({
+        isOpen,
+        title,
+        message,
+        pinValue,
+        setPinValue,
+        errorMsg,
+        isVerifying,
+        onClose,
+        onSubmit
+    }) {
+        if (!isOpen) return null;
+        return (
+            <div className="fixed inset-0 z-[90] bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-base font-extrabold text-slate-800">{title || '🔒 본인 비밀번호 확인'}</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+                    {message && <p className="text-xs text-slate-500 whitespace-pre-line">{message}</p>}
+                    <form onSubmit={onSubmit} className="space-y-3">
+                        <input
+                            type="password"
+                            placeholder="현재 계정 비밀번호 입력"
+                            value={pinValue}
+                            onChange={(e) => setPinValue(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold tracking-widest"
+                            autoFocus
+                            required
+                        />
+                        {errorMsg && <div className="text-xs font-bold text-rose-500">⚠️ {errorMsg}</div>}
+                        <div className="flex gap-2">
+                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                            <button type="submit" disabled={isVerifying} className="flex-1 py-2.5 rounded-xl bg-[#00C48C] disabled:opacity-60 text-white text-xs font-extrabold">
+                                {isVerifying ? '확인 중...' : '확인'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 2. 준비물 체크리스트 항목 이름 수정 모달
+    // ========================================================================
+    function EditCheckItemModal({ editingCheckItem, setEditingCheckItem, onClose, onSubmit }) {
+        if (!editingCheckItem) return null;
+        return (
+            <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-base font-extrabold text-slate-800">✏️ 준비물 항목 수정</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+                    <form onSubmit={onSubmit} className="space-y-3">
+                        <input
+                            type="text"
+                            value={editingCheckItem.text}
+                            onChange={(e) => setEditingCheckItem({ ...editingCheckItem, text: e.target.value })}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold"
+                            autoFocus
+                            required
+                        />
+                        <div className="flex gap-2">
+                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                            <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">저장</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 3. 공통 확인 / 삭제 경고 모달 (iframe 호환)
+    // ========================================================================
+    function ConfirmDialogModal({ dialog, onClose }) {
+        if (!dialog || !dialog.isOpen) return null;
+        return (
+            <div className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+                    <h3 className="text-base font-extrabold text-slate-900">{dialog.title || '확인'}</h3>
+                    <p className="text-xs sm:text-sm text-slate-600 whitespace-pre-line leading-relaxed">{dialog.message}</p>
+                    <div className="flex gap-2 pt-1">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold"
+                        >
+                            취소
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const fn = dialog.onConfirm;
+                                onClose();
+                                if (typeof fn === 'function') fn();
+                            }}
+                            className={`flex-1 py-2.5 rounded-xl text-white text-xs font-extrabold ${
+                                dialog.isDanger === false ? 'bg-[#00C48C] hover:bg-[#00A878]' : 'bg-rose-500 hover:bg-rose-600'
+                            }`}
+                        >
+                            {dialog.confirmText || '삭제 / 실행'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
     // 4. 로그인 / 새 계정 시작 모달 (여행 테마 이모지 36종 그리드)
     // ========================================================================
     function LoginModal({
@@ -91,7 +231,7 @@
                         {appVersion}
                     </span>
                     {currentProfile && (
-                        <button onClick={onClose} className="absolute top-4 left-5 text-slate-400 hover:text-slate-600 text-sm font-bold">✕</button>
+                        <button type="button" onClick={onClose} className="absolute top-4 left-5 text-slate-400 hover:text-slate-600 text-sm font-bold">✕</button>
                     )}
 
                     <div className="text-center pt-3">
@@ -101,7 +241,7 @@
 
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200">
                         <div className="text-[11px] font-bold text-slate-400 mb-2">등록된 계정 빠른 선택</div>
-                        {Object.keys(registeredProfiles).length > 0 ? (
+                        {Object.keys(registeredProfiles || {}).length > 0 ? (
                             <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                                 {Object.values(registeredProfiles).filter(p => p && p.name).map(prof => (
                                     <button
@@ -201,7 +341,7 @@
                 <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
                     <div className="flex justify-between items-center">
                         <h3 className="text-lg font-extrabold text-slate-800">⚙️ 내 프로필 수정</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
                     </div>
                     <form onSubmit={onSubmit} className="space-y-4">
                         <div>
@@ -256,6 +396,278 @@
     // ========================================================================
     // 6. 총괄 관리자용 사용자 관리 모달
     // ========================================================================
+    function UserManageModal({
+        isOpen,
+        registeredProfiles,
+        activeUserKey,
+        onClose,
+        onToggleAdmin,
+        onResetPassword,
+        onDeleteUser
+    }) {
+        const [resetTargetKey, setResetTargetKey] = useState(null);
+        const [newPinInput, setNewPinInput] = useState('');
+
+        useEffect(() => {
+            if (!isOpen) {
+                setResetTargetKey(null);
+                setNewPinInput('');
+            }
+        }, [isOpen]);
+
+        if (!isOpen) return null;
+        const U = getU();
+        const list = Object.values(registeredProfiles || {}).filter(p => p && p.name);
+
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[88vh] overflow-y-auto">
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <h3 className="text-lg font-extrabold text-slate-800">🛡️ 관리자 · 사용자 관리 ({list.length}명)</h3>
+                            <p className="text-[11px] text-slate-400 mt-0.5">비밀번호 재설정 시 해당 계정은 보안을 위해 자동 재로그인이 요청됩니다.</p>
+                        </div>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+
+                    <div className="space-y-2.5">
+                        {list.map(prof => {
+                            const pKey = prof.key || (U.sanitizeKey ? U.sanitizeKey(prof.name) : prof.name);
+                            const isSelf = pKey === activeUserKey;
+                            return (
+                                <div key={pKey} className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="text-xl">{prof.avatar || '✈️'}</span>
+                                            <div className="min-w-0">
+                                                <div className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                                    <span>{prof.name}</span>
+                                                    {prof.isAdmin && <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-extrabold">관리자</span>}
+                                                    {isSelf && <span className="text-[10px] bg-emerald-50 text-[#00A878] px-2 py-0.5 rounded-full font-extrabold">나</span>}
+                                                </div>
+                                                <div className="text-[11px] text-slate-400">
+                                                    보안: {prof.secretMode === 'zero-download' ? '🔒 무유출 해시' : '레거시(로그인 시 자동 전환)'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                                            {!isSelf && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onToggleAdmin(pKey, prof)}
+                                                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"
+                                                >
+                                                    {prof.isAdmin ? '관리자 해제' : '관리자 지정'}
+                                                </button>
+                                            )}
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setResetTargetKey(resetTargetKey === pKey ? null : pKey);
+                                                    setNewPinInput('');
+                                                }}
+                                                className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800"
+                                            >
+                                                🔑 비번 재설정
+                                            </button>
+                                            {!isSelf && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onDeleteUser(pKey, prof)}
+                                                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-500"
+                                                >
+                                                    삭제
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {resetTargetKey === pKey && (
+                                        <form
+                                            onSubmit={(e) => {
+                                                e.preventDefault();
+                                                if (newPinInput.trim().length < 4) return;
+                                                onResetPassword(pKey, prof, newPinInput.trim());
+                                                setResetTargetKey(null);
+                                                setNewPinInput('');
+                                            }}
+                                            className="flex gap-2 pt-2 border-t border-slate-200"
+                                        >
+                                            <input
+                                                type="text"
+                                                placeholder="새 비밀번호 (4자리 이상)"
+                                                value={newPinInput}
+                                                onChange={(e) => setNewPinInput(e.target.value)}
+                                                className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-mono font-bold"
+                                                required
+                                            />
+                                            <button type="submit" className="bg-[#00C48C] text-white text-xs font-extrabold px-3.5 py-1.5 rounded-xl shrink-0">
+                                                변경 적용
+                                            </button>
+                                        </form>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <button type="button" onClick={onClose} className="w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-extrabold">닫기</button>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 7. 동행자 멤버 관리 모달
+    // ========================================================================
+    function MemberModal({
+        isOpen,
+        currentTrip,
+        registeredProfiles,
+        activeUserKey,
+        isAdmin,
+        onClose,
+        onAddMember,
+        onRemoveMember,
+        onCopyCode
+    }) {
+        const [guestName, setGuestName] = useState('');
+        const [guestAvatar, setGuestAvatar] = useState('🧳');
+
+        useEffect(() => {
+            if (!isOpen) {
+                setGuestName('');
+                setGuestAvatar('🧳');
+            }
+        }, [isOpen]);
+
+        if (!isOpen || !currentTrip) return null;
+        const U = getU();
+        const avatars = (getP().avatarOptions || []).slice(0, 18);
+        const companions = toArr(currentTrip.companions);
+        const existingKeys = new Set(companions.map(c => c.profileKey).filter(Boolean));
+        const existingNames = new Set(companions.map(c => String(c.name || '').trim().toLowerCase()));
+        const availableProfiles = Object.values(registeredProfiles || {}).filter(p => {
+            if (!p || !p.name) return false;
+            const k = p.key || (U.sanitizeKey ? U.sanitizeKey(p.name) : p.name);
+            return !existingKeys.has(k) && !existingNames.has(p.name.trim().toLowerCase());
+        });
+
+        const handleAddGuest = (e) => {
+            e.preventDefault();
+            if (!guestName.trim()) return;
+            onAddMember({ name: guestName.trim(), avatar: guestAvatar || '🧳', profileKey: '' });
+            setGuestName('');
+        };
+
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[88vh] overflow-y-auto">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-extrabold text-slate-800">👥 여행 동행자 관리 ({companions.length}명)</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+
+                    {currentTrip.visibility !== 'private' && currentTrip.shareCode && (
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 flex items-center justify-between gap-2">
+                            <div>
+                                <div className="text-[11px] font-bold text-[#00A878]">공유 초대코드</div>
+                                <div className="text-sm font-mono font-extrabold text-slate-800">{currentTrip.shareCode}</div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onCopyCode(currentTrip.shareCode)}
+                                className="bg-[#00C48C] text-white text-xs font-extrabold px-3 py-1.5 rounded-xl"
+                            >
+                                📋 코드 복사
+                            </button>
+                        </div>
+                    )}
+
+                    {/* 현재 동행자 리스트 */}
+                    <div className="space-y-2">
+                        <div className="text-xs font-extrabold text-slate-600">참여 중인 멤버</div>
+                        {companions.map((comp, idx) => (
+                            <div key={comp.id} className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-lg">{comp.avatar || '✈️'}</span>
+                                    <span className="text-sm font-extrabold text-slate-800">{comp.name}</span>
+                                    {idx === 0 && <span className="text-[10px] bg-emerald-50 text-[#00A878] px-2 py-0.5 rounded-full font-extrabold">방장</span>}
+                                </div>
+                                {companions.length > 1 && (idx > 0 || isAdmin) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onRemoveMember(comp)}
+                                        className="text-xs font-bold text-rose-500 hover:bg-rose-50 px-2.5 py-1 rounded-lg"
+                                    >
+                                        제외
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* 등록된 계정에서 빠른 추가 */}
+                    {availableProfiles.length > 0 && (
+                        <div className="space-y-2">
+                            <div className="text-xs font-extrabold text-slate-600">등록된 사용자 바로 초대</div>
+                            <div className="flex flex-wrap gap-1.5">
+                                {availableProfiles.map(prof => {
+                                    const pKey = prof.key || (U.sanitizeKey ? U.sanitizeKey(prof.name) : prof.name);
+                                    return (
+                                        <button
+                                            key={pKey}
+                                            type="button"
+                                            onClick={() => onAddMember({ name: prof.name, avatar: prof.avatar || '✈️', profileKey: pKey })}
+                                            className="px-3 py-1.5 rounded-xl bg-white hover:bg-emerald-50 border border-slate-200 hover:border-[#00C48C] text-xs font-bold text-slate-700"
+                                        >
+                                            + {prof.avatar || '✈️'} {prof.name}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 게스트/직접 이름 입력 추가 */}
+                    <form onSubmit={handleAddGuest} className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
+                        <div className="text-xs font-extrabold text-slate-700">미가입 동행자 직접 추가 (정산·체크리스트 연동)</div>
+                        <div className="flex flex-wrap gap-1">
+                            {avatars.map(av => (
+                                <button
+                                    key={av}
+                                    type="button"
+                                    onClick={() => setGuestAvatar(av)}
+                                    className={`w-7 h-7 rounded-lg text-sm flex items-center justify-center border ${
+                                        guestAvatar === av ? 'bg-emerald-50 border-[#00C48C]' : 'bg-white border-slate-200'
+                                    }`}
+                                >
+                                    {av}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                placeholder="동행자 이름 입력"
+                                value={guestName}
+                                onChange={(e) => setGuestName(e.target.value)}
+                                className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                required
+                            />
+                            <button type="submit" className="bg-[#00C48C] text-white text-xs font-extrabold px-4 py-2 rounded-xl shrink-0">
+                                + 추가
+                            </button>
+                        </div>
+                    </form>
+
+                    <button type="button" onClick={onClose} className="w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-extrabold">닫기</button>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
     // 8. 장소 추가 / 수정 모달 (비용 용어 통일 + 예약/바우처 링크 추가)
     // ========================================================================
     function PlaceModal({
@@ -283,7 +695,7 @@
                 <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-lg font-extrabold text-slate-800">{editingPlaceInfo ? '✏️ 일정 수정' : '📍 새 장소 등록'}</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
                     </div>
                     <form onSubmit={onSubmit} className="space-y-3.5">
                         <div className="grid grid-cols-2 gap-2">
@@ -475,7 +887,6 @@
         const CURRENCIES = P.currencies || {};
         const itineraryMap = currentTrip.itinerary || {};
 
-        // 전체 일차의 일정 장소를 맵으로 정리 (1:N 다중 지출 연동용)
         const allPlacesByDay = tripDays.map(d => ({
             day: Number(d),
             items: toArr(itineraryMap[d])
@@ -526,7 +937,7 @@
                     removeReceipt: false
                 });
             } catch (err) {
-                setReceiptError(err?.message || '영수증 이미지 압축에 실패했습니다.');
+                setReceiptError((err && err.message) || '영수증 이미지 압축에 실패했습니다.');
             } finally {
                 setIsCompressing(false);
                 if (fileInputRef.current) fileInputRef.current.value = '';
@@ -540,7 +951,7 @@
                 <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-lg font-extrabold text-slate-800">{editingExpenseId ? '✏️ 지출 내역 수정' : '💰 새 지출 기록'}</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
                     </div>
                     <form onSubmit={onSubmit} className="space-y-3.5">
                         <div className="grid grid-cols-2 gap-3">
@@ -571,11 +982,8 @@
                             </div>
                         </div>
 
-                        {/* 일정 장소 연동 드롭다운 */}
                         <div>
-                            <label className="block text-xs font-bold text-slate-600 mb-1">
-                                📍 지출 장소 (일정 연동 · 선택)
-                            </label>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">📍 지출 장소 (일정 연동 · 선택)</label>
                             <select
                                 value={newExpense.linkedPlaceId || ''}
                                 onChange={(e) => handleSelectLinkedPlace(e.target.value)}
@@ -692,7 +1100,6 @@
                             </div>
                         </div>
 
-                        {/* 영수증 사진 첨부 + 외부 링크(구글 드라이브 등) */}
                         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2.5">
                             <div className="flex items-center justify-between gap-2">
                                 <span className="text-xs font-extrabold text-slate-700">🧾 영수증 첨부 (선택)</span>
@@ -713,11 +1120,8 @@
                                 </button>
                             </div>
 
-                            {receiptError && (
-                                <div className="text-[11px] font-bold text-rose-500">{receiptError}</div>
-                            )}
+                            {receiptError && <div className="text-[11px] font-bold text-rose-500">{receiptError}</div>}
 
-                            {/* 새로 첨부된 압축 이미지 미리보기 */}
                             {newExpense.pendingReceipt && newExpense.pendingReceipt.dataUrl && (
                                 <div className="bg-white rounded-xl p-2 border border-emerald-200 flex items-center gap-3">
                                     <img
@@ -741,7 +1145,6 @@
                                 </div>
                             )}
 
-                            {/* 수정 모드에서 기존 영수증이 있는 경우 */}
                             {hasExistingActiveReceipt && (
                                 <div className="bg-white rounded-xl p-2.5 border border-emerald-200 flex items-center justify-between gap-2">
                                     <span className="text-[11px] font-extrabold text-[#00A878]">✅ 저장된 영수증 사진 있음</span>
@@ -794,9 +1197,415 @@
     }
 
     // ========================================================================
-    // 9. 가계부 지출 추가 / 수정 모달
+    // 10. 새 여행 만들기 모달
     // ========================================================================
-    // 13. [v0.2.2 고도화] 상세 정산 · 날짜별/다회차 중간 정산 & 롤백 모달
+    function NewTripModal({
+        isOpen,
+        form,
+        setForm,
+        registeredProfiles,
+        activeUserKey,
+        onClose,
+        onSubmit
+    }) {
+        if (!isOpen) return null;
+        const U = getU();
+        const P = getP();
+        const COUNTRY_PRESETS = P.countryPresets || {};
+        const CURRENCIES = P.currencies || {};
+        const selectedCountryMeta = COUNTRY_PRESETS[form.country] || COUNTRY_PRESETS['직접 입력'] || { cities: ['직접 입력'], currency: 'KRW' };
+        const cities = selectedCountryMeta.cities || ['직접 입력'];
+
+        const otherProfiles = Object.values(registeredProfiles || {}).filter(p => {
+            if (!p || !p.name) return false;
+            const k = p.key || (U.sanitizeKey ? U.sanitizeKey(p.name) : p.name);
+            return k !== activeUserKey;
+        });
+
+        const handleCountryChange = (nextCountry) => {
+            const meta = COUNTRY_PRESETS[nextCountry] || {};
+            const firstCity = (meta.cities && meta.cities[0]) || '직접 입력';
+            setForm({
+                ...form,
+                country: nextCountry,
+                city: firstCity,
+                currency: meta.currency || form.currency || 'KRW'
+            });
+        };
+
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-extrabold text-slate-800">✈️ 새 여행 플래너 만들기</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+                    <form onSubmit={onSubmit} className="space-y-3.5">
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setForm({ ...form, visibility: 'shared' })}
+                                className={`py-2 rounded-xl text-xs font-extrabold border ${
+                                    form.visibility !== 'private' ? 'bg-emerald-50 border-[#00C48C] text-[#00A878]' : 'bg-slate-50 border-slate-200 text-slate-500'
+                                }`}
+                            >
+                                👥 공유 여행 (함께 편집)
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setForm({ ...form, visibility: 'private' })}
+                                className={`py-2 rounded-xl text-xs font-extrabold border ${
+                                    form.visibility === 'private' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500'
+                                }`}
+                            >
+                                🔒 개인 여행 (나만 보기)
+                            </button>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">여행 제목</label>
+                            <input
+                                type="text"
+                                placeholder="예: 도쿄 미식 & 쇼핑 여행"
+                                value={form.title}
+                                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold"
+                                required
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">국가 선택</label>
+                                <select
+                                    value={form.country}
+                                    onChange={(e) => handleCountryChange(e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-bold"
+                                >
+                                    {Object.keys(COUNTRY_PRESETS).map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">도시 선택</label>
+                                <select
+                                    value={form.city}
+                                    onChange={(e) => setForm({ ...form, city: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-bold"
+                                >
+                                    {cities.map(ct => <option key={ct} value={ct}>{ct}</option>)}
+                                    {!cities.includes('직접 입력') && <option value="직접 입력">직접 입력</option>}
+                                </select>
+                            </div>
+                        </div>
+
+                        {(form.country === '직접 입력' || form.city === '직접 입력') && (
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">직접 입력 여행지</label>
+                                <input
+                                    type="text"
+                                    placeholder="예: 스페인 마드리드, 강원도 양양"
+                                    value={form.customDestination || ''}
+                                    onChange={(e) => setForm({ ...form, customDestination: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold"
+                                    required
+                                />
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">출발일</label>
+                                <CustomDateInput
+                                    value={form.startDate}
+                                    onChange={(e) => {
+                                        const nextStart = e.target.value;
+                                        setForm({
+                                            ...form,
+                                            startDate: nextStart,
+                                            endDate: form.endDate && form.endDate < nextStart ? nextStart : form.endDate
+                                        });
+                                    }}
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">도착일</label>
+                                <CustomDateInput
+                                    value={form.endDate}
+                                    onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">주요 통화</label>
+                                <select
+                                    value={form.currency}
+                                    onChange={(e) => setForm({ ...form, currency: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-bold"
+                                >
+                                    {Object.keys(CURRENCIES).map(code => <option key={code} value={code}>{CURRENCIES[code].name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">목표 예산 (원화 KRW)</label>
+                                <input
+                                    type="number"
+                                    value={form.budgetKRW}
+                                    onChange={(e) => setForm({ ...form, budgetKRW: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                />
+                            </div>
+                        </div>
+
+                        {form.visibility !== 'private' && otherProfiles.length > 0 && (
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1.5">함께할 등록 사용자 초대 (선택)</label>
+                                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                                    {otherProfiles.map(prof => {
+                                        const k = prof.key || (U.sanitizeKey ? U.sanitizeKey(prof.name) : prof.name);
+                                        const selected = (form.selectedMemberKeys || []).includes(k);
+                                        return (
+                                            <button
+                                                type="button"
+                                                key={k}
+                                                onClick={() => {
+                                                    const prev = form.selectedMemberKeys || [];
+                                                    const next = selected ? prev.filter(x => x !== k) : [...prev, k];
+                                                    setForm({ ...form, selectedMemberKeys: next });
+                                                }}
+                                                className={`px-2.5 py-1 rounded-xl text-xs font-bold border ${
+                                                    selected ? 'bg-[#00C48C] text-white border-[#00C48C]' : 'bg-slate-50 text-slate-600 border-slate-200'
+                                                }`}
+                                            >
+                                                {prof.avatar || '✈️'} {prof.name} {selected && '✓'}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 pt-2">
+                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                            <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">여행 생성하기</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 11. 여행 기본 정보 수정 모달
+    // ========================================================================
+    function EditTripModal({ isOpen, currentTrip, form, setForm, onClose, onSubmit }) {
+        if (!isOpen || !currentTrip) return null;
+        const P = getP();
+        const CURRENCIES = P.currencies || {};
+
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-extrabold text-slate-800">⚙️ 여행 설정 수정</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+                    <form onSubmit={onSubmit} className="space-y-3.5">
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setForm({ ...form, visibility: 'shared' })}
+                                className={`py-2 rounded-xl text-xs font-extrabold border ${
+                                    form.visibility !== 'private' ? 'bg-emerald-50 border-[#00C48C] text-[#00A878]' : 'bg-slate-50 border-slate-200 text-slate-500'
+                                }`}
+                            >
+                                👥 공유 여행
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setForm({ ...form, visibility: 'private' })}
+                                className={`py-2 rounded-xl text-xs font-extrabold border ${
+                                    form.visibility === 'private' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-500'
+                                }`}
+                            >
+                                🔒 개인 여행
+                            </button>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">여행 제목</label>
+                            <input
+                                type="text"
+                                value={form.title}
+                                onChange={(e) => setForm({ ...form, title: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold"
+                                required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">여행지 표기</label>
+                            <input
+                                type="text"
+                                value={form.destination}
+                                onChange={(e) => setForm({ ...form, destination: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold"
+                                required
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">출발일</label>
+                                <CustomDateInput
+                                    value={form.startDate}
+                                    onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">도착일</label>
+                                <CustomDateInput
+                                    value={form.endDate}
+                                    onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">주요 통화</label>
+                                <select
+                                    value={form.currency}
+                                    onChange={(e) => setForm({ ...form, currency: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-bold"
+                                >
+                                    {Object.keys(CURRENCIES).map(code => <option key={code} value={code}>{CURRENCIES[code].name}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">목표 예산 (원화 KRW)</label>
+                                <input
+                                    type="number"
+                                    value={form.budgetKRW}
+                                    onChange={(e) => setForm({ ...form, budgetKRW: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex gap-2 pt-2">
+                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                            <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">저장 완료</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 12. 통화별 기준 환율 및 일자별 환율 설정 모달
+    // ========================================================================
+    function RateModal({ isOpen, currentTrip, tripDays, onClose, onUpdateBaseRate, onUpdateDailyRate }) {
+        const [selectedCurr, setSelectedCurr] = useState('JPY');
+
+        useEffect(() => {
+            if (isOpen && currentTrip) {
+                setSelectedCurr((currentTrip.currency && currentTrip.currency !== 'KRW') ? currentTrip.currency : 'JPY');
+            }
+        }, [isOpen, currentTrip]);
+
+        if (!isOpen || !currentTrip) return null;
+        const U = getU();
+        const P = getP();
+        const CURRENCIES = P.currencies || {};
+        const nonKrwCodes = Object.keys(CURRENCIES).filter(c => c !== 'KRW');
+        const currMeta = CURRENCIES[selectedCurr] || { unit: 1, defaultRate: 1, name: selectedCurr };
+        const baseVal = (currentTrip.baseRates && currentTrip.baseRates[selectedCurr]) ||
+            (selectedCurr === currentTrip.currency && currentTrip.exchangeRate) ||
+            currMeta.defaultRate;
+
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[88vh] overflow-y-auto">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-extrabold text-slate-800">💱 기준 · 일자별 환율 설정</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">설정할 외화 선택</label>
+                        <select
+                            value={selectedCurr}
+                            onChange={(e) => setSelectedCurr(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                        >
+                            {nonKrwCodes.map(code => (
+                                <option key={code} value={code}>{CURRENCIES[code].name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-2">
+                        <label className="block text-xs font-extrabold text-[#00A878]">
+                            기본 적용 환율 ({currMeta.unit} {selectedCurr} 당 원화 KRW)
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="number"
+                                step="any"
+                                value={baseVal}
+                                onChange={(e) => onUpdateBaseRate(selectedCurr, Number(e.target.value) || currMeta.defaultRate)}
+                                className="flex-1 bg-white border border-emerald-200 rounded-xl px-3 py-2 text-sm font-extrabold"
+                            />
+                            <span className="text-xs font-extrabold text-slate-600 shrink-0">원</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500">
+                            일차별 환율을 따로 입력하지 않은 날은 위 기본 환율이 자동 적용됩니다.
+                        </p>
+                    </div>
+
+                    <div className="space-y-2">
+                        <div className="text-xs font-extrabold text-slate-700">일차별 개별 환율 덮어쓰기 (선택)</div>
+                        <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                            {[0, ...tripDays].map(d => {
+                                const dayRateObj = (currentTrip.dailyRates && currentTrip.dailyRates[d]) || {};
+                                const val = dayRateObj[selectedCurr] !== undefined ? dayRateObj[selectedCurr] : '';
+                                return (
+                                    <div key={d} className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                                        <span className="text-xs font-bold text-slate-700">
+                                            {d === 0 ? '✈️ 사전 지출' : `${d}일차 (${U.getDayDateDot(currentTrip.startDate, d, false)})`}
+                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                            <input
+                                                type="number"
+                                                step="any"
+                                                placeholder={`기본 ${baseVal}`}
+                                                value={val}
+                                                onChange={(e) => onUpdateDailyRate(d, selectedCurr, e.target.value)}
+                                                className="w-24 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-right"
+                                            />
+                                            <span className="text-[11px] font-bold text-slate-400">원</span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <button type="button" onClick={onClose} className="w-full py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">완료</button>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 13. 상세 정산 · 날짜별/다회차 중간 정산 & 롤백 모달
     // ========================================================================
     function SettlementModal({
         isOpen,
@@ -874,10 +1683,9 @@
                                 사람별 이체 날짜와 분할 송금을 여러 번 기록하고, 실수 시 언제든 롤백할 수 있습니다.
                             </p>
                         </div>
-                        <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
                     </div>
 
-                    {/* 1) 카테고리별 지출 비중 시각화 */}
                     {budgetSummary.categoryBreakdown && budgetSummary.categoryBreakdown.length > 0 && (
                         <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2.5">
                             <div className="text-xs font-extrabold text-slate-700">📌 카테고리별 지출 비중</div>
@@ -899,7 +1707,6 @@
                         </div>
                     )}
 
-                    {/* 2) 개인별 결제 / 부담 / 중간정산 반영 현황 */}
                     <div className="space-y-2">
                         <div className="text-xs font-extrabold text-slate-700">👥 멤버별 정산 현황</div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -933,7 +1740,6 @@
                         </div>
                     </div>
 
-                    {/* 3) 남은 송금 가이드 + 날짜·부분 정산 / 원클릭 전액 정산 */}
                     <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-2.5">
                         <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-extrabold text-[#00A878]">📢 남은 송금 가이드</span>
@@ -965,7 +1771,6 @@
                                                 type="button"
                                                 onClick={() => openManualForm(t)}
                                                 className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold px-2.5 py-2 rounded-xl"
-                                                title="이체 날짜를 지정하거나 일부 금액만 분할 정산합니다"
                                             >
                                                 📅 날짜·분할
                                             </button>
@@ -982,7 +1787,6 @@
                             </div>
                         )}
 
-                        {/* 날짜·분할 송금 입력 폼 */}
                         {showManualForm && (
                             <form onSubmit={handleManualSubmit} className="bg-white rounded-2xl p-3.5 border border-emerald-300 space-y-3 mt-2">
                                 <div className="text-xs font-extrabold text-slate-800">💸 중간 정산 송금 기록 추가 (날짜·분할 지원)</div>
@@ -1046,7 +1850,6 @@
                         )}
                     </div>
 
-                    {/* 4) 중간 정산 완료 이력 (이체 날짜순 원장 리스트 + 안전 롤백 버튼) */}
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-extrabold text-slate-700">
@@ -1087,7 +1890,6 @@
                                                 type="button"
                                                 onClick={() => onDeleteSettlement(stl, fromC, toC)}
                                                 className="text-[11px] font-extrabold text-rose-500 hover:bg-rose-50 border border-rose-200 px-2.5 py-1.5 rounded-xl shrink-0"
-                                                title="이 정산 기록을 취소하고 미정산 잔액으로 되돌립니다"
                                             >
                                                 ↩️ 롤백
                                             </button>
@@ -1098,7 +1900,7 @@
                         )}
                     </div>
 
-                    <button onClick={onClose} className="w-full py-3 bg-[#00C48C] text-white font-extrabold rounded-xl text-xs">닫기</button>
+                    <button type="button" onClick={onClose} className="w-full py-3 bg-[#00C48C] text-white font-extrabold rounded-xl text-xs">닫기</button>
                 </div>
             </div>
         );
@@ -1106,6 +1908,52 @@
 
     // ========================================================================
     // 14. 일정 및 정산 공유 모달
+    // ========================================================================
+    function ShareModal({ isOpen, currentTrip, shareText, onClose, onCopy }) {
+        if (!isOpen || !currentTrip) return null;
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[88vh] overflow-y-auto">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-extrabold text-slate-800">📤 일정 · 정산 공유</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+
+                    {currentTrip.visibility !== 'private' && currentTrip.shareCode && (
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between gap-2">
+                            <div>
+                                <div className="text-[11px] font-bold text-[#00A878]">동행자 참여 초대코드</div>
+                                <div className="text-base font-mono font-extrabold text-slate-800">{currentTrip.shareCode}</div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => onCopy(currentTrip.shareCode)}
+                                className="bg-[#00C48C] text-white text-xs font-extrabold px-3 py-2 rounded-xl"
+                            >
+                                코드 복사
+                            </button>
+                        </div>
+                    )}
+
+                    <pre className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 text-xs text-slate-700 font-mono whitespace-pre-wrap max-h-64 overflow-y-auto">
+                        {shareText}
+                    </pre>
+
+                    <div className="flex gap-2">
+                        <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">닫기</button>
+                        <button
+                            type="button"
+                            onClick={() => onCopy(shareText)}
+                            className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold"
+                        >
+                            📋 전체 요약본 복사
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     // ========================================================================
     // 15. 내 여행 보관함 모달 (개인 우선 -> 공유 + D-Day 배지)
     // ========================================================================
@@ -1146,7 +1994,7 @@
                 <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
                     <div className="flex justify-between items-center">
                         <h3 className="text-lg font-extrabold text-slate-800">📂 내 여행 보관함 ({allVisibleTrips.length}개)</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
                     </div>
 
                     <div className="space-y-4">
@@ -1171,7 +2019,7 @@
                                                 </div>
                                                 <div className="text-sm font-extrabold text-slate-800 mt-0.5 truncate">{t.title}</div>
                                             </div>
-                                            <button onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1 shrink-0">삭제</button>
+                                            <button type="button" onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1 shrink-0">삭제</button>
                                         </div>
                                     ))}
                                 </div>
@@ -1182,6 +2030,7 @@
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-extrabold text-[#00A878]">👥 공유 여행 ({visibleSharedTrips.length})</span>
                                 <button
+                                    type="button"
                                     onClick={() => { onClose(); onOpenJoinCode(); }}
                                     className="text-[11px] font-extrabold text-[#00A878] bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg"
                                 >
@@ -1207,7 +2056,7 @@
                                                 </div>
                                                 <div className="text-sm font-extrabold text-slate-800 mt-0.5 truncate">{t.title}</div>
                                             </div>
-                                            <button onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1 shrink-0">
+                                            <button type="button" onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1 shrink-0">
                                                 {(isAdmin || U.sanitizeKey(t.ownerKey) === activeUserKey) ? '삭제' : '나가기'}
                                             </button>
                                         </div>
@@ -1218,6 +2067,7 @@
                     </div>
 
                     <button
+                        type="button"
                         onClick={() => { onClose(); onOpenNewTrip(); }}
                         className="w-full py-3 rounded-2xl bg-[#00C48C] text-white text-xs font-extrabold"
                     >
@@ -1231,7 +2081,46 @@
     // ========================================================================
     // 16. 초대 코드 입력 모달 (TRIP- 스마트 고정)
     // ========================================================================
-    // 17. [v0.2.2 신규] 항공편(편도/왕복) · 숙소(전체/일부) 자동 일정 등록 모달
+    function JoinCodeModal({ isOpen, digits, setDigits, onClose, onSubmit }) {
+        if (!isOpen) return null;
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-extrabold text-slate-800">🔑 초대코드로 여행 참여</h3>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+                    <p className="text-xs text-slate-500">친구에게 공유받은 초대코드 뒤 4자리 숫자를 입력하세요.</p>
+                    <form onSubmit={onSubmit} className="space-y-4">
+                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 gap-2">
+                            <span className="text-base font-mono font-extrabold text-[#00A878] shrink-0">TRIP-</span>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={4}
+                                placeholder="1234"
+                                value={digits}
+                                onChange={(e) => {
+                                    const onlyNums = e.target.value.replace(/[^0-9]/g, '').slice(0, 4);
+                                    setDigits(onlyNums);
+                                }}
+                                className="flex-1 bg-transparent text-lg font-mono font-extrabold tracking-widest text-slate-800 focus:outline-none"
+                                autoFocus
+                                required
+                            />
+                        </div>
+                        <div className="flex gap-2">
+                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                            <button type="submit" disabled={digits.length < 4} className="flex-1 py-2.5 rounded-xl bg-[#00C48C] disabled:opacity-40 text-white text-xs font-extrabold">참여하기</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 17. 항공편(편도/왕복) · 숙소(전체/일부) 자동 일정 등록 모달
     // ========================================================================
     function FlightHotelModal({
         isOpen,
@@ -1245,7 +2134,6 @@
         const [tab, setTab] = useState('flight');
         const [errorMsg, setErrorMsg] = useState('');
 
-        // 항공편 폼 상태
         const [flight, setFlight] = useState({
             tripType: 'round',
             outDay: 1,
@@ -1265,7 +2153,6 @@
             payerId: 'c1'
         });
 
-        // 숙소 폼 상태
         const [hotel, setHotel] = useState({
             name: '',
             address: '',
@@ -1403,10 +2290,9 @@
                 <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
                     <div className="flex justify-between items-center">
                         <h3 className="text-lg font-extrabold text-slate-800">✈️ 항공편 · 🏨 숙소 자동 일정 등록</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
                     </div>
 
-                    {/* 항공 / 숙소 모드 전환 탭 */}
                     <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-2xl">
                         <button
                             type="button"
@@ -1434,7 +2320,6 @@
                         </div>
                     )}
 
-                    {/* ==================== 항공편 폼 ==================== */}
                     {tab === 'flight' && (
                         <form onSubmit={submitFlight} className="space-y-3.5">
                             <div className="grid grid-cols-2 gap-2">
@@ -1458,7 +2343,6 @@
                                 </button>
                             </div>
 
-                            {/* 가는 편 박스 */}
                             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
                                 <div className="text-xs font-extrabold text-sky-700">🛫 가는 편</div>
                                 <div className="grid grid-cols-3 gap-2">
@@ -1510,7 +2394,6 @@
                                 />
                             </div>
 
-                            {/* 오는 편 박스 (왕복일 때) */}
                             {flight.tripType === 'round' && (
                                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
                                     <div className="text-xs font-extrabold text-indigo-700">🛬 오는 편</div>
@@ -1575,7 +2458,6 @@
                                 />
                             </div>
 
-                            {/* 항공권 비용 및 가계부 동시 등록 */}
                             <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 space-y-2.5">
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="col-span-2">
@@ -1632,7 +2514,6 @@
                         </form>
                     )}
 
-                    {/* ==================== 숙소 폼 ==================== */}
                     {tab === 'hotel' && (
                         <form onSubmit={submitHotel} className="space-y-3.5">
                             <div>
@@ -1762,7 +2643,6 @@
                                 </div>
                             </div>
 
-                            {/* 숙박 비용 및 가계부 동시 등록 */}
                             <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 space-y-2.5">
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="col-span-2">
@@ -1834,7 +2714,7 @@
     }
 
     // ========================================================================
-    // 18. [v0.2.2 신규] 영수증 지연 로딩 뷰어 모달
+    // 18. 영수증 지연 로딩 뷰어 모달
     // ========================================================================
     function ReceiptViewerModal({ viewerState, onClose }) {
         const [loading, setLoading] = useState(false);
@@ -1891,7 +2771,7 @@
                                 <div className="text-xs font-bold text-[#00A878] mt-0.5">{viewerState.amountText}</div>
                             )}
                         </div>
-                        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-sm font-bold shrink-0">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 text-sm font-bold shrink-0">✕</button>
                     </div>
 
                     {viewerState.hasReceipt && (
@@ -1927,7 +2807,7 @@
                         </a>
                     )}
 
-                    <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-extrabold">
+                    <button type="button" onClick={onClose} className="w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-extrabold">
                         닫기
                     </button>
                 </div>
@@ -1936,7 +2816,7 @@
     }
 
     // ========================================================================
-    // 19. [v0.2.2 신규] 빠른 환율 계산기 모달
+    // 19. 빠른 환율 계산기 모달
     // ========================================================================
     function QuickCalcModal({ isOpen, currentTrip, selectedDay, onClose, onApplyToExpense }) {
         const [currency, setCurrency] = useState('JPY');
@@ -1967,8 +2847,7 @@
                 setKrwVal('');
                 return;
             }
-            const computedKrw = Math.round((num * effectiveRate) / unit);
-            setKrwVal(String(computedKrw));
+            setKrwVal(String(Math.round((num * effectiveRate) / unit)));
         };
 
         const handleKrwChange = (raw) => {
@@ -1999,7 +2878,7 @@
                 <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
                     <div className="flex justify-between items-center">
                         <h3 className="text-base font-extrabold text-slate-800">🧮 빠른 환율 계산기</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
+                        <button type="button" onClick={onClose} className="text-slate-400">✕</button>
                     </div>
 
                     <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5">
@@ -2023,7 +2902,7 @@
                             <input
                                 type="number"
                                 step="any"
-                                placeholder={`금액 입력 (${CURRENCIES[currency]?.symbol || currency})`}
+                                placeholder={`금액 입력 (${(CURRENCIES[currency] && CURRENCIES[currency].symbol) || currency})`}
                                 value={foreignVal}
                                 onChange={(e) => handleForeignChange(e.target.value)}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-lg font-extrabold text-right text-slate-900"
@@ -2083,7 +2962,7 @@
         );
     }
 
-    // 전역 네임스페이스 등록
+    // 전역 네임스페이스 등록 (20종 전체 완비)
     global.TripfullModals = {
         CustomDateInput,
         SecurityCheckModal,
