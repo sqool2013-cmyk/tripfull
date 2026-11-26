@@ -1,18 +1,18 @@
 /**
  * ============================================================================
- * Tripfull v0.2.2 - 전체 모달 컴포넌트 모음 (modals.jsx)
+ * Tripfull v.0.2.2-b - 전체 모달 컴포넌트 모음 (modals.jsx)
  * ============================================================================
  * 구성 (총 20개 컴포넌트 · 생략 없는 100% 완전판):
  *  0. CustomDatePicker      - 모바일/Safari 안전 커스텀 달력 선택기
  *  1. ConfirmDialogModal    - 공용 확인/경고 다이얼로그
- *  2. SecurityCheckModal    - 비밀번호 재확인 모달
+ *  2. SecurityCheckModal    - 비밀번호 재확인 모달 (프로필·관리자 보안 잠금)
  *  3. EditCheckItemModal    - 준비물 항목 이름 수정 모달
  *  4. LoginModal            - 로그인 및 신규 계정 생성 (여행 이모지 36종)
  *  5. EditMyProfileModal    - 내 프로필 · 비밀번호 수정 (여행 이모지 36종)
  *  6. UserManageModal       - 관리자 전용 계정 관리 (권한/비밀번호 초기화/삭제)
  *  7. MemberModal           - 여행 동행 멤버 관리 (등록 회원 빠른 추가/게스트 추가)
  *  8. PlaceModal            - 일정 장소 추가/수정 (비용, 한글 통화+원화 환산, 예약 링크, 주소 검색)
- *  9. ExpenseModal          - 가계부 지출 추가/수정 (일정 장소 연동 드롭다운, 영수증 압축 첨부/링크)
+ *  9. ExpenseModal          - 가계부 지출 추가/수정 (일정 연동, 나만 보기, 정산 제외, 영수증 첨부/링크)
  * 10. FlightHotelModal      - 항공편(편도/왕복) · 숙소(전체/일부 기간) 자동 일정 배치 모달
  * 11. ReceiptViewerModal    - 영수증 지연 로딩 이미지 뷰어 & 외부 링크 모달
  * 12. QuickCalcModal        - 빠른 환율 계산기 (즉시 지출 기록 연동)
@@ -281,7 +281,7 @@
                         <h3 className="text-base font-extrabold text-slate-900">🔒 {title || '보안 확인'}</h3>
                         <button type="button" onClick={onClose} className="text-slate-400 font-bold text-lg">✕</button>
                     </div>
-                    {message && <p className="text-xs text-slate-500">{message}</p>}
+                    {message && <p className="text-xs text-slate-500 leading-relaxed">{message}</p>}
                     <form onSubmit={onSubmit} className="space-y-3">
                         <input
                             type="password"
@@ -975,7 +975,7 @@
     }
 
     // ========================================================================
-    // 9. 가계부 지출 추가/수정 모달 (일정 장소 연동 · 영수증 압축 첨부/링크)
+    // 9. 가계부 지출 추가/수정 모달 (일정 장소 연동 · 나만 보기 · 정산 제외 · 영수증)
     // ========================================================================
     function ExpenseModal({
         isOpen,
@@ -1011,6 +1011,9 @@
         const previewExpKRW = (newExpense.currency && newExpense.currency !== 'KRW' && Number(newExpense.amount) > 0 && B.toKRW)
             ? B.toKRW(currentTrip, newExpense.amount, newExpense.currency, newExpense.day || 0)
             : 0;
+
+        const isPrivate = Boolean(newExpense.isPrivate);
+        const isExcluded = isPrivate || Boolean(newExpense.excludeFromSplit);
 
         const allPlacesByDay = tripDays.map(d => ({
             day: d,
@@ -1210,41 +1213,90 @@
                             </div>
                         </div>
 
-                        <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                                <label className="text-xs font-bold text-slate-600">함께 정산할 멤버 (1/N)</label>
+                        {/* 공개 범위 & 정산 제외 옵션 (v.0.2.2-b 신규) */}
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2">
+                            <div className="text-xs font-extrabold text-slate-700">🔐 공개 · 정산 옵션</div>
+                            <div className="grid grid-cols-2 gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => setNewExpense({ ...newExpense, splitWith: companions.map(c => c.id) })}
-                                    className="text-[11px] font-bold text-[#00A878]"
+                                    onClick={() => {
+                                        const nextPrivate = !isPrivate;
+                                        setNewExpense({
+                                            ...newExpense,
+                                            isPrivate: nextPrivate,
+                                            excludeFromSplit: nextPrivate ? true : Boolean(newExpense.excludeFromSplit)
+                                        });
+                                    }}
+                                    className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition flex items-center justify-center gap-1 ${
+                                        isPrivate
+                                            ? 'bg-purple-50 text-purple-700 border-purple-300 ring-1 ring-purple-300/50'
+                                            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                                    }`}
                                 >
-                                    전원 선택
+                                    <span>🔒 나만 보기</span>
+                                    {isPrivate && <span>✓</span>}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isPrivate}
+                                    onClick={() => setNewExpense({ ...newExpense, excludeFromSplit: !Boolean(newExpense.excludeFromSplit) })}
+                                    className={`py-2 px-2.5 rounded-xl text-xs font-extrabold border transition flex items-center justify-center gap-1 ${
+                                        isExcluded
+                                            ? 'bg-amber-50 text-amber-800 border-amber-300 ring-1 ring-amber-300/50'
+                                            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                                    } disabled:opacity-80`}
+                                >
+                                    <span>🎁 정산 제외{isPrivate ? ' (자동)' : ''}</span>
+                                    {isExcluded && !isPrivate && <span>✓</span>}
                                 </button>
                             </div>
-                            <div className="flex flex-wrap gap-1.5">
-                                {companions.map(c => {
-                                    const selected = toArray(newExpense.splitWith).includes(c.id);
-                                    return (
-                                        <button
-                                            key={c.id}
-                                            type="button"
-                                            onClick={() => {
-                                                const cur = toArray(newExpense.splitWith);
-                                                const next = selected ? cur.filter(id => id !== c.id) : [...cur, c.id];
-                                                setNewExpense({ ...newExpense, splitWith: next });
-                                            }}
-                                            className={`px-2.5 py-1.5 rounded-xl text-xs font-extrabold border transition ${
-                                                selected
-                                                    ? 'bg-[#00C48C] text-white border-[#00C48C]'
-                                                    : 'bg-slate-50 text-slate-500 border-slate-200'
-                                            }`}
-                                        >
-                                            {c.avatar || '✈️'} {c.name} {selected ? '✓' : ''}
-                                        </button>
-                                    );
-                                })}
+                            <div className="text-[11px] text-slate-500 leading-snug">
+                                {isPrivate
+                                    ? '🔒 내 계정에서만 보이며, 동행자 화면과 1/N 정산에서 완전히 제외됩니다.'
+                                    : (isExcluded
+                                        ? '🎁 함께 보기·총 지출에는 포함되지만, 내가 쏜 지출 등으로 1/N 정산에서 제외됩니다.'
+                                        : '👥 동행자 모두에게 공유되며 아래 선택한 멤버로 1/N 정산됩니다.')}
                             </div>
                         </div>
+
+                        {/* 함께 정산할 멤버 (정산 제외/나만 보기 시 비활성 안내) */}
+                        {!isExcluded && (
+                            <div>
+                                <div className="flex items-center justify-between mb-1.5">
+                                    <label className="text-xs font-bold text-slate-600">함께 정산할 멤버 (1/N)</label>
+                                    <button
+                                        type="button"
+                                        onClick={() => setNewExpense({ ...newExpense, splitWith: companions.map(c => c.id) })}
+                                        className="text-[11px] font-bold text-[#00A878]"
+                                    >
+                                        전원 선택
+                                    </button>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {companions.map(c => {
+                                        const selected = toArray(newExpense.splitWith).includes(c.id);
+                                        return (
+                                            <button
+                                                key={c.id}
+                                                type="button"
+                                                onClick={() => {
+                                                    const cur = toArray(newExpense.splitWith);
+                                                    const next = selected ? cur.filter(id => id !== c.id) : [...cur, c.id];
+                                                    setNewExpense({ ...newExpense, splitWith: next });
+                                                }}
+                                                className={`px-2.5 py-1.5 rounded-xl text-xs font-extrabold border transition ${
+                                                    selected
+                                                        ? 'bg-[#00C48C] text-white border-[#00C48C]'
+                                                        : 'bg-slate-50 text-slate-500 border-slate-200'
+                                                }`}
+                                            >
+                                                {c.avatar || '✈️'} {c.name} {selected ? '✓' : ''}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
 
                         {/* 영수증 사진 첨부 (초경량 자동 압축) & 외부 링크 */}
                         <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2.5">
@@ -2546,6 +2598,8 @@
         const findComp = (cid) => companions.find(c => c.id === cid) || { name: '알 수 없음', avatar: '✈️' };
         const settlements = budgetSummary.settlements || [];
         const breakdown = budgetSummary.categoryBreakdown || [];
+        const excludedAmt = Number(budgetSummary.excludedSplitSpentKRW || 0);
+        const privateAmt = Number(budgetSummary.privateSpentKRW || 0);
 
         const handlePrefillManual = (t) => {
             setManualForm({
@@ -2567,6 +2621,13 @@
                         </div>
                         <button type="button" onClick={onClose} className="text-slate-400 font-bold text-lg">✕</button>
                     </div>
+
+                    {excludedAmt > 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-2xl px-3.5 py-2.5 text-[11px] font-bold text-amber-800">
+                            ℹ️ 정산 제외 지출 총 {excludedAmt.toLocaleString()}원
+                            {privateAmt > 0 ? ` (나만 보기 ${privateAmt.toLocaleString()}원 포함)` : ''}은 아래 1/N 정산 계산에서 자동 제외되었습니다.
+                        </div>
+                    )}
 
                     {/* 1) 남은 송금 가이드 */}
                     <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5">
