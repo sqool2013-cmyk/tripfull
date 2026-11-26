@@ -3,18 +3,33 @@
  * Tripfull v0.2.2 - 공통 유틸리티 모듈 (utils.js)
  * ============================================================================
  * 역할:
- *  1. presets.json 마스터 데이터 보관 및 안전한 폴백 제공
- *  2. Firebase 키 정제 및 SHA-256 단방향 해시 / 무유출 경로 키 생성
- *  3. 한국식 날짜 표기(yyyy. m. d.(요일) / m. d.(요일)), D-Day 배지 및 여행 일차 계산
- *  4. 2026. 7. 1. 행정체제 개편(영종구·제물포구·검단구·서해구, 전남광주통합특별시) 주소 정제
- *  5. OpenStreetMap 주소 검색 및 구글 지도 단일 위치·구간 길찾기·전체 동선 URL 생성
- *  6. 초대코드 생성, 일정 시간순 정렬, 예약 URL 안전 검증, CSV 다운로드, 영수증 이미지 압축
+ *  1. 11개 국가(도시·시차·전압·경찰/구급 긴급전화·준비물) 및 12개 통화 마스터 데이터
+ *     100% 기본 내장 (presets.json 로드 지연/실패 시에도 절대 너프 방지)
+ *  2. 한글 화폐 단위 표기 유틸리티 (KRW->원, JPY->엔, USD->달러 등)
+ *  3. Firebase 키 정제 및 SHA-256 단방향 해시 / 무유출 경로 키 생성
+ *  4. 한국식 날짜 표기, D-Day 배지, 2026 행정구역 개편 주소 정제, 구글 지도 링크
+ *  5. 초대코드, 일정 시간순 정렬, 예약 URL 안전 검증, CSV 다운로드, 영수증 이미지 압축
  * ============================================================================
  */
 (function (global) {
     'use strict';
 
-    // presets.json 로드 전/실패 시에도 앱이 깨지지 않도록 최소 기본값 유지
+    const CURRENCY_KOR_UNITS = {
+        KRW: '원',
+        JPY: '엔',
+        USD: '달러',
+        EUR: '유로',
+        VND: '동',
+        TWD: '대만달러',
+        THB: '바트',
+        CNY: '위안',
+        SGD: '싱가포르달러',
+        AUD: '호주달러',
+        HKD: '홍콩달러',
+        GBP: '파운드'
+    };
+
+    // 11개 국가 · 12개 통화 · 경찰/구급 긴급전화 전체를 기본 내장
     const FALLBACK_PRESETS = {
         schemaVersion: '0.2.2',
         daysKr: ['일', '월', '화', '수', '목', '금', '토'],
@@ -35,19 +50,152 @@
             etc: { label: '기타', emoji: '📌', color: 'text-slate-700 bg-slate-100 border-slate-200' }
         },
         currencies: {
-            KRW: { symbol: '₩', name: '대한민국 원 (KRW)', unit: 1, defaultRate: 1 },
-            JPY: { symbol: '¥', name: '일본 엔 (JPY)', unit: 100, defaultRate: 905 },
-            USD: { symbol: '$', name: '미국 달러 (USD)', unit: 1, defaultRate: 1380 }
+            KRW: { symbol: '₩', korUnit: '원', name: '대한민국 원 (원)', unit: 1, defaultRate: 1 },
+            JPY: { symbol: '¥', korUnit: '엔', name: '일본 엔 (엔)', unit: 100, defaultRate: 905 },
+            USD: { symbol: '$', korUnit: '달러', name: '미국 달러 (달러)', unit: 1, defaultRate: 1380 },
+            EUR: { symbol: '€', korUnit: '유로', name: '유럽 유로 (유로)', unit: 1, defaultRate: 1490 },
+            VND: { symbol: '₫', korUnit: '동', name: '베트남 동 (동)', unit: 100, defaultRate: 5.5 },
+            TWD: { symbol: 'NT$', korUnit: '대만달러', name: '대만 달러 (대만달러)', unit: 1, defaultRate: 43 },
+            THB: { symbol: '฿', korUnit: '바트', name: '태국 바트 (바트)', unit: 1, defaultRate: 40 },
+            CNY: { symbol: '¥', korUnit: '위안', name: '중국 위안 (위안)', unit: 1, defaultRate: 192 },
+            SGD: { symbol: 'S$', korUnit: '싱가포르달러', name: '싱가포르 달러 (싱가포르달러)', unit: 1, defaultRate: 1030 },
+            AUD: { symbol: 'A$', korUnit: '호주달러', name: '호주 달러 (호주달러)', unit: 1, defaultRate: 910 },
+            HKD: { symbol: 'HK$', korUnit: '홍콩달러', name: '홍콩 달러 (홍콩달러)', unit: 1, defaultRate: 178 },
+            GBP: { symbol: '£', korUnit: '파운드', name: '영국 파운드 (파운드)', unit: 1, defaultRate: 1750 }
         },
         countryPresets: {
             '대한민국': {
-                cities: ['서울', '제주', '부산'],
+                cities: [
+                    '서울', '제주', '부산', '전남광주(광주·여수·순천·담양)',
+                    '인천(영종·제물포·송도)', '강릉/속초', '경주', '전주', '대전/세종', '대구'
+                ],
                 currency: 'KRW',
                 tzOffset: 9,
                 tzDiffLabel: '한국 표준시 (KST)',
                 voltage: '220V (60Hz)',
-                emergency: '경찰 112 / 구급 119',
-                presets: ['신분증 확인', '숙소 예약 확인', '충전기']
+                emergency: '경찰 112 / 구급·화재 119',
+                presets: [
+                    '신분증 및 모바일 운전면허증',
+                    '숙소 및 KTX·항공편 예약 확인',
+                    '개인 세면도구 및 충전기'
+                ]
+            },
+            '일본': {
+                cities: ['도쿄', '오사카', '후쿠오카', '삿포로', '교토', '나고야', '오키나와', '마쓰야마'],
+                currency: 'JPY',
+                tzOffset: 9,
+                tzDiffLabel: '시차 없음',
+                voltage: '110V (돼지코 11자형 필요)',
+                emergency: '경찰 110 / 구급·화재 119 / 영사콜 +82-2-3210-0404',
+                presets: [
+                    '비짓재팬웹(Visit Japan Web) QR 등록',
+                    '110V 돼지코 어댑터',
+                    '동전지갑 및 트래블카드'
+                ]
+            },
+            '베트남': {
+                cities: ['하노이', '다낭', '호치민', '나트랑', '푸꾸옥', '달랏', '호이안'],
+                currency: 'VND',
+                tzOffset: 7,
+                tzDiffLabel: '한국보다 2시간 느림 (-2h)',
+                voltage: '220V (한국 플러그 호환)',
+                emergency: '경찰 113 / 구급 115 / 화재 114',
+                presets: [
+                    '그랩(Grab) 앱 설치 및 카드 등록',
+                    '동 지갑 (화폐 단위 구분용)',
+                    '샤워기 필터 및 상비약'
+                ]
+            },
+            '태국': {
+                cities: ['방콕', '푸켓', '치앙마이', '파타야', '코사무이'],
+                currency: 'THB',
+                tzOffset: 7,
+                tzDiffLabel: '한국보다 2시간 느림 (-2h)',
+                voltage: '220V (한국 플러그 호환)',
+                emergency: '관광경찰 1155 / 경찰 191 / 구급 1669',
+                presets: [
+                    '트래블월렛 / GLN 결제 준비',
+                    '모기 기피제 및 선글라스',
+                    '사원 방문용 복장'
+                ]
+            },
+            '대만': {
+                cities: ['타이베이', '가오슝', '타이중', '타이난', '화롄'],
+                currency: 'TWD',
+                tzOffset: 8,
+                tzDiffLabel: '한국보다 1시간 느림 (-1h)',
+                voltage: '110V (돼지코 11자형 필요)',
+                emergency: '경찰 110 / 구급·화재 119',
+                presets: [
+                    '온라인 입국신고서 작성',
+                    '이지카드(EasyCard) 및 110V 돼지코',
+                    '우산 및 일회용 우비'
+                ]
+            },
+            '미국': {
+                cities: ['워싱턴 D.C.', '뉴욕', '로스앤젤레스', '하와이(호놀룰루)', '샌프란시스코', '라스베이거스', '괌'],
+                currency: 'USD',
+                tzOffset: -5,
+                tzDiffLabel: '한국보다 14~19시간 느림',
+                voltage: '120V (돼지코 11자형 필요)',
+                emergency: '통합 긴급전화(경찰·구급·화재) 911',
+                presets: [
+                    'ESTA 전자여행허가 승인 확인',
+                    '팁(Tip)용 소액 달러 현금',
+                    '120V 멀티 어댑터'
+                ]
+            },
+            '유럽': {
+                cities: ['파리', '런던', '로마', '바르셀로나', '인터라켄/취리히', '프라하', '비엔나'],
+                currency: 'EUR',
+                tzOffset: 1,
+                tzDiffLabel: '한국보다 7~8시간 느림',
+                voltage: '220~230V (영국·스위스 멀티어댑터 필수)',
+                emergency: '유럽 통합 긴급전화(경찰·구급) 112',
+                presets: [
+                    '소매치기 방지 목걸이 지갑/스트랩',
+                    '유레일 패스 / 기차표 예매 확인',
+                    '유럽형 멀티 어댑터'
+                ]
+            },
+            '중국/홍콩': {
+                cities: ['베이징', '상하이', '홍콩', '마카오', '칭다오', '장가계'],
+                currency: 'CNY',
+                tzOffset: 8,
+                tzDiffLabel: '한국보다 1시간 느림 (-1h)',
+                voltage: '220V (홍콩·마카오는 영국식 3구 어댑터)',
+                emergency: '중국 경찰 110·구급 120 / 홍콩 긴급 999',
+                presets: [
+                    '알리페이 / 위챗페이 카드 연동',
+                    '고덕지도 앱 및 로밍/eSIM',
+                    '멀티 어댑터'
+                ]
+            },
+            '싱가포르': {
+                cities: ['싱가포르'],
+                currency: 'SGD',
+                tzOffset: 8,
+                tzDiffLabel: '한국보다 1시간 느림 (-1h)',
+                voltage: '230V (영국식 3구 멀티 어댑터 필요)',
+                emergency: '경찰 999 / 구급·화재 995',
+                presets: [
+                    'SG 입국카드(SGAC) 온라인 작성',
+                    '영국식 3구 멀티 어댑터',
+                    '컨택리스 교통카드 및 우산'
+                ]
+            },
+            '호주': {
+                cities: ['캔버라', '시드니', '멜버른', '브리즈번/골드코스트'],
+                currency: 'AUD',
+                tzOffset: 10,
+                tzDiffLabel: '한국보다 1시간 빠름 (+1h)',
+                voltage: '230V (호주식 삼각 어댑터 필요)',
+                emergency: '통합 긴급전화(경찰·구급·화재) 000',
+                presets: [
+                    '호주 ETA 전자비자 앱 승인 확인',
+                    '호주식 삼각 멀티 어댑터',
+                    '선크림 및 선글라스'
+                ]
             },
             '직접 입력': {
                 cities: ['직접 입력'],
@@ -56,7 +204,11 @@
                 tzDiffLabel: '',
                 voltage: '',
                 emergency: '영사콜센터 +82-2-3210-0404',
-                presets: ['여권 및 항공권 확인', '결제 수단 준비', '로밍 / eSIM 준비']
+                presets: [
+                    '여권 및 항공권 E-티켓 확인',
+                    '트래블 카드 및 현지 화폐 환전',
+                    '로밍 / 유심 / eSIM 준비'
+                ]
             }
         },
         addressRules: {
@@ -69,11 +221,27 @@
 
     let activePresets = FALLBACK_PRESETS;
 
-    /**
-     * presets.json 데이터를 로드하고 메모리에 등록합니다.
-     * @param {string} url - presets.json 경로 (기본 './presets.json?v=0.2.2')
-     * @returns {Promise<object>} 로드된 프리셋 객체
-     */
+    function mergePresetsSafe(base, incoming) {
+        if (!incoming || typeof incoming !== 'object') return base;
+        const mergedCurrencies = Object.assign({}, base.currencies);
+        Object.keys(incoming.currencies || {}).forEach(function (code) {
+            mergedCurrencies[code] = Object.assign(
+                { korUnit: CURRENCY_KOR_UNITS[code] || code },
+                base.currencies[code] || {},
+                incoming.currencies[code]
+            );
+            if (!mergedCurrencies[code].korUnit) {
+                mergedCurrencies[code].korUnit = CURRENCY_KOR_UNITS[code] || code;
+            }
+        });
+
+        const mergedCountries = Object.assign({}, base.countryPresets, incoming.countryPresets || {});
+        return Object.assign({}, base, incoming, {
+            currencies: mergedCurrencies,
+            countryPresets: mergedCountries
+        });
+    }
+
     async function loadPresets(url) {
         const targetUrl = url || './presets.json?v=0.2.2';
         try {
@@ -81,28 +249,45 @@
             if (!res.ok) throw new Error('HTTP ' + res.status);
             const data = await res.json();
             if (data && data.countryPresets && data.currencies) {
-                activePresets = Object.assign({}, FALLBACK_PRESETS, data);
+                activePresets = mergePresetsSafe(FALLBACK_PRESETS, data);
             }
         } catch (err) {
-            console.warn('[TripfullUtils] presets.json 로드 실패, 내장 폴백 사용:', err);
+            console.warn('[TripfullUtils] presets.json 로드 실패, 완전 내장 기본값 사용:', err);
         }
         return activePresets;
     }
 
-    /**
-     * 현재 활성화된 프리셋 데이터를 반환합니다.
-     */
     function getPresets() {
         return activePresets;
     }
 
-    /**
-     * 외부에서 직접 프리셋 객체를 주입할 때 사용합니다.
-     */
     function setPresets(data) {
         if (data && typeof data === 'object') {
-            activePresets = Object.assign({}, FALLBACK_PRESETS, data);
+            activePresets = mergePresetsSafe(FALLBACK_PRESETS, data);
         }
+    }
+
+    // ========================================================================
+    // 0. 한글 화폐 단위 표기 유틸리티
+    // ========================================================================
+
+    /**
+     * 통화 코드를 한글 화폐 단위로 반환합니다. (예: KRW -> 원, JPY -> 엔, USD -> 달러)
+     */
+    function getCurrencyKorUnit(code) {
+        const clean = String(code || 'KRW').toUpperCase();
+        const currMeta = activePresets.currencies && activePresets.currencies[clean];
+        if (currMeta && currMeta.korUnit) return currMeta.korUnit;
+        return CURRENCY_KOR_UNITS[clean] || clean;
+    }
+
+    /**
+     * 금액과 통화를 한글 화폐 단위 문자열로 포맷합니다. (예: 4,200엔, 67,500원)
+     */
+    function formatMoneyKor(amount, code) {
+        const num = Number(amount);
+        const formatted = isNaN(num) ? '0' : num.toLocaleString();
+        return formatted + getCurrencyKorUnit(code);
     }
 
     // ========================================================================
@@ -258,17 +443,20 @@
     function detectCountryMeta(tripObj) {
         const presets = activePresets.countryPresets || FALLBACK_PRESETS.countryPresets;
         if (!tripObj) return presets['대한민국'] || presets['직접 입력'];
-        if (tripObj.country && presets[tripObj.country]) {
+        if (tripObj.country && tripObj.country !== '직접 입력' && presets[tripObj.country]) {
             return presets[tripObj.country];
         }
-        const dest = tripObj.destination || '';
+        const dest = String(tripObj.destination || '');
         const entries = Object.entries(presets);
         for (let i = 0; i < entries.length; i++) {
             const cName = entries[i][0];
             const meta = entries[i][1];
             if (cName === '직접 입력') continue;
             if (dest.indexOf(cName) !== -1) return meta;
-            if (Array.isArray(meta.cities) && meta.cities.some(function (city) { return dest.indexOf(city) !== -1; })) {
+            if (Array.isArray(meta.cities) && meta.cities.some(function (city) {
+                const simpleCity = String(city).split('(')[0].split('/')[0].trim();
+                return simpleCity && dest.indexOf(simpleCity) !== -1;
+            })) {
                 return meta;
             }
         }
@@ -485,9 +673,7 @@
             try {
                 await navigator.clipboard.writeText(text);
                 return true;
-            } catch (e) {
-                // iframe 권한 제한 시 폴백으로 진행
-            }
+            } catch (e) {}
         }
         try {
             const ta = document.createElement('textarea');
@@ -602,7 +788,7 @@
             const rows = [];
             rows.push([
                 '시점', '날짜', '카테고리', '지출 항목명', '연동 장소',
-                '결제 금액', '통화', '원화 환산(KRW)', '결제자', '정산 대상',
+                '결제 금액', '통화', '원화 환산(원)', '결제자', '정산 대상',
                 '결제 수단', '영수증/링크', '기록자'
             ].map(esc).join(','));
 
@@ -631,7 +817,7 @@
                     exp.title || '',
                     exp.linkedPlaceName || '',
                     Number(exp.amount || 0),
-                    exp.currency || 'KRW',
+                    getCurrencyKorUnit(exp.currency || 'KRW'),
                     krw,
                     findCompName(exp.payerId),
                     splitNames,
@@ -643,11 +829,11 @@
 
             if (budgetSummary) {
                 rows.push('');
-                rows.push(['[가계부 요약]', '총 지출(KRW)', Number(budgetSummary.totalSpentKRW || 0)].map(esc).join(','));
-                rows.push(['[가계부 요약]', '중간 정산 완료액(KRW)', Number(budgetSummary.totalSettledKRW || 0)].map(esc).join(','));
+                rows.push(['[가계부 요약]', '총 지출(원)', Number(budgetSummary.totalSpentKRW || 0)].map(esc).join(','));
+                rows.push(['[가계부 요약]', '중간 정산 완료액(원)', Number(budgetSummary.totalSettledKRW || 0)].map(esc).join(','));
                 if (Array.isArray(budgetSummary.settlements) && budgetSummary.settlements.length > 0) {
                     rows.push('');
-                    rows.push(['[중간 정산 이력]', '이체 날짜', '보낸 사람', '받은 사람', '송금액(KRW)', '메모'].map(esc).join(','));
+                    rows.push(['[중간 정산 이력]', '이체 날짜', '보낸 사람', '받은 사람', '송금액(원)', '메모'].map(esc).join(','));
                     budgetSummary.settlements.forEach(function (stl) {
                         rows.push([
                             '중간 정산',
@@ -661,7 +847,7 @@
                 }
                 if (Array.isArray(budgetSummary.transfers) && budgetSummary.transfers.length > 0) {
                     rows.push('');
-                    rows.push(['[남은 송금 가이드]', '보낼 사람', '받을 사람', '남은 금액(KRW)'].map(esc).join(','));
+                    rows.push(['[남은 송금 가이드]', '보낼 사람', '받을 사람', '남은 금액(원)'].map(esc).join(','));
                     budgetSummary.transfers.forEach(function (t) {
                         rows.push(['남은 정산', t.from, t.to, Number(t.amount || 0)].map(esc).join(','));
                     });
@@ -750,11 +936,12 @@
         });
     }
 
-    // 전역 네임스페이스 등록
     global.TripfullUtils = {
         loadPresets: loadPresets,
         getPresets: getPresets,
         setPresets: setPresets,
+        getCurrencyKorUnit: getCurrencyKorUnit,
+        formatMoneyKor: formatMoneyKor,
         sanitizeKey: sanitizeKey,
         hashSecret: hashSecret,
         toSafeSecretKey: toSafeSecretKey,
