@@ -1,25 +1,26 @@
 /**
  * ============================================================================
- * Tripfull v0.2.0 - 전체 모달 UI 컴포넌트 모음 (modals.jsx)
+ * Tripfull v0.2.2 - 전체 모달 UI 컴포넌트 모음 (modals.jsx)
  * ============================================================================
  * 역할:
  *  1. 날짜 입력기(CustomDateInput - iOS/iPadOS 프레임 이탈 방지)
  *  2. 보안 확인, 삭제 경고 확인, 체크리스트 항목 수정 모달
- *  3. 로그인, 내 프로필 수정, 관리자용 사용자 관리 모달(무유출 보안 상태 표시)
- *  4. 멤버 초대/관리, 장소 추가/수정, 지출 추가/수정 모달
- *  5. 새 여행 만들기, 여행 수정, 통화·일자별 환율 설정 모달
- *  6. [v0.2.0 고도화] 상세 정산 & 중간 정산 모달(원클릭 정산 완료, 부분 송금 입력,
- *     중간 정산 이력/취소, 카테고리별 지출 비중 막대 시각화)
- *  7. 일정·정산 공유, 내 여행 보관함, 초대 코드 입력 모달
+ *  3. 로그인, 내 프로필 수정(여행 테마 이모지 36종 그리드), 관리자용 사용자 관리 모달
+ *  4. 멤버 초대/관리, 장소 추가/수정(비용·예약 링크), 항공·숙소 자동 등록 모달
+ *  5. 지출 추가/수정(일정 장소 드롭다운 연동·영수증 사진 초경량 첨부·외부 링크)
+ *  6. 영수증 지연 로딩 뷰어 모달, 빠른 환율 계산기 모달
+ *  7. 새 여행 만들기, 여행 수정, 통화·일자별 환율 설정 모달
+ *  8. 상세 정산 & 다회차·날짜별 중간 정산 및 롤백 관리 모달
+ *  9. 일정·정산 공유, 내 여행 보관함(D-Day 배지), 초대 코드 입력 모달
  *
- * 의존성: React 18, window.TripfullUtils (utils.js)
+ * 의존성: React 18, window.TripfullUtils (utils.js), window.TripfullBudget, window.TripfullAPI
  * 전역 노출: window.TripfullModals
  * ============================================================================
  */
 (function (global) {
     'use strict';
 
-    const { useState, useRef } = React;
+    const { useState, useRef, useEffect } = React;
 
     /**
      * TripfullUtils와 프리셋 데이터를 안전하게 가져오는 내부 헬퍼
@@ -28,10 +29,32 @@
         return global.TripfullUtils || {};
     }
 
+    function getB() {
+        return global.TripfullBudget || {};
+    }
+
+    function getAPI() {
+        return global.TripfullAPI || {};
+    }
+
+    function toArr(raw) {
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw.filter(Boolean);
+        if (typeof raw === 'object') return Object.values(raw).filter(Boolean);
+        return [];
+    }
+
     function getP() {
         const u = getU();
         return typeof u.getPresets === 'function' ? u.getPresets() : {
-            avatarOptions: ['✈️', '🧳', '🗺️', '📸', '🏖️', '⛰️', '🍜', '☕', '🛍️', '🕶️', '⛺', '🌟'],
+            avatarOptions: [
+                '✈️', '🛫', '🚄', '🚗', '🚌', '🚢',
+                '⛴️', '🚠', '🚲', '🎈', '🧳', '🎒',
+                '🗺️', '🧭', '📸', '🎫', '🕶️', '👒',
+                '🏖️', '🏝️', '⛰️', '🗻', '⛺', '🏙️',
+                '🗼', '🗽', '🏰', '🎡', '⛩️', '🌅',
+                '🍜', '🍣', '☕', '🍻', '🛍️', '🌟'
+            ],
             categoryMeta: {},
             currencies: {},
             countryPresets: {}
@@ -41,155 +64,7 @@
     // ========================================================================
     // 0. 공통 커스텀 날짜 선택기 (Safari / 모바일 그리드 이탈 원천 차단)
     // ========================================================================
-    function CustomDateInput({ value, onChange, required }) {
-        const inputRef = useRef(null);
-        const U = getU();
-
-        const openPicker = () => {
-            if (inputRef.current) {
-                if (typeof inputRef.current.showPicker === 'function') {
-                    try {
-                        inputRef.current.showPicker();
-                        return;
-                    } catch (e) {}
-                }
-                inputRef.current.focus();
-            }
-        };
-
-        return (
-            <div
-                onClick={openPicker}
-                className="relative w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800 flex items-center justify-between cursor-pointer hover:border-teal-400 transition select-none overflow-hidden"
-            >
-                <span className="truncate">{U.formatDateDot ? U.formatDateDot(value, true) : (value || '날짜 선택')}</span>
-                <span className="text-slate-400 text-[11px] shrink-0 ml-1">📅</span>
-                <input
-                    ref={inputRef}
-                    type="date"
-                    value={value || ''}
-                    onChange={onChange}
-                    required={required}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 1. 보안 비밀번호 재확인 모달
-    // ========================================================================
-    function SecurityCheckModal({ modalState, setModalState, onVerify }) {
-        if (!modalState || !modalState.isOpen) return null;
-
-        const close = () => {
-            setModalState({ isOpen: false, title: '', description: '', inputPin: '', onSuccess: null });
-        };
-
-        return (
-            <div className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
-                <form onSubmit={onVerify} className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
-                    <div className="flex justify-between items-center">
-                        <h4 className="text-base font-extrabold text-slate-900">🔐 {modalState.title}</h4>
-                        <button type="button" onClick={close} className="text-slate-400 hover:text-slate-600">✕</button>
-                    </div>
-                    <p className="text-xs text-slate-500 leading-relaxed">{modalState.description}</p>
-                    <input
-                        type="password"
-                        placeholder="현재 비밀번호 입력"
-                        value={modalState.inputPin}
-                        onChange={(e) => setModalState({ ...modalState, inputPin: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-center text-base font-mono font-extrabold tracking-widest"
-                        autoFocus
-                        required
-                    />
-                    <div className="flex gap-2">
-                        <button type="button" onClick={close} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-extrabold">취소</button>
-                        <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] hover:bg-[#00A878] text-white text-xs font-extrabold">확인</button>
-                    </div>
-                </form>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 2. 체크리스트 항목명 수정 모달
-    // ========================================================================
-    function EditCheckItemModal({ editingCheckItem, setEditingCheckItem, onSave }) {
-        if (!editingCheckItem) return null;
-
-        return (
-            <div className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        if (!editingCheckItem.text.trim()) return;
-                        onSave(editingCheckItem.id, editingCheckItem.text.trim());
-                    }}
-                    className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4"
-                >
-                    <div className="flex justify-between items-center">
-                        <h4 className="text-base font-extrabold text-slate-900">✏️ 준비물 항목 수정</h4>
-                        <button type="button" onClick={() => setEditingCheckItem(null)} className="text-slate-400">✕</button>
-                    </div>
-                    <input
-                        type="text"
-                        value={editingCheckItem.text}
-                        onChange={(e) => setEditingCheckItem({ ...editingCheckItem, text: e.target.value })}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold"
-                        autoFocus
-                        required
-                    />
-                    <div className="flex gap-2">
-                        <button type="button" onClick={() => setEditingCheckItem(null)} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-extrabold">취소</button>
-                        <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">저장</button>
-                    </div>
-                </form>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 3. 삭제 / 중요 작업 확인 모달 (브라우저 alert/confirm 완전 대체)
-    // ========================================================================
-    function ConfirmDialogModal({ confirmDialog, setConfirmDialog }) {
-        if (!confirmDialog || !confirmDialog.isOpen) return null;
-
-        const isDanger = confirmDialog.tone !== 'primary';
-
-        return (
-            <div className="fixed inset-0 z-[95] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
-                    <h4 className="text-base font-extrabold text-slate-900">
-                        {isDanger ? '⚠️' : '✅'} {confirmDialog.title}
-                    </h4>
-                    <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line">{confirmDialog.message}</p>
-                    <div className="flex gap-2 pt-2">
-                        <button
-                            onClick={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
-                            className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-extrabold"
-                        >
-                            취소
-                        </button>
-                        <button
-                            onClick={() => {
-                                if (confirmDialog.onConfirm) confirmDialog.onConfirm();
-                                setConfirmDialog({ ...confirmDialog, isOpen: false });
-                            }}
-                            className={`flex-1 py-2.5 rounded-xl text-white text-xs font-extrabold ${
-                                isDanger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-[#00C48C] hover:bg-[#00A878]'
-                            }`}
-                        >
-                            {confirmDialog.confirmText || '확인'}
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 4. 로그인 / 새 계정 시작 모달
+    // 4. 로그인 / 새 계정 시작 모달 (여행 테마 이모지 36종 그리드)
     // ========================================================================
     function LoginModal({
         isOpen,
@@ -211,7 +86,7 @@
 
         return (
             <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 relative">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 relative max-h-[92vh] overflow-y-auto">
                     <span className="absolute top-4 right-5 text-[11px] font-mono font-bold text-slate-400 bg-slate-100 px-2.5 py-0.5 rounded-full">
                         {appVersion}
                     </span>
@@ -256,17 +131,19 @@
 
                     <form onSubmit={onSubmit} className="space-y-4">
                         <div>
-                            <label className="block text-xs font-bold text-slate-600 mb-1.5">여행 테마 아이콘 선택 (선택 사항)</label>
-                            <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                            <label className="block text-xs font-bold text-slate-600 mb-1.5">
+                                여행 테마 아이콘 선택 ({avatars.length}종 · 선택 사항)
+                            </label>
+                            <div className="grid grid-cols-6 sm:grid-cols-9 gap-1.5 max-h-36 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-200">
                                 {avatars.map(av => (
                                     <button
                                         type="button"
                                         key={av}
                                         onClick={() => setLoginForm({ ...loginForm, avatar: av })}
-                                        className={`w-9 h-9 rounded-xl text-lg flex items-center justify-center shrink-0 border transition ${
+                                        className={`h-9 rounded-xl text-lg flex items-center justify-center border transition ${
                                             loginForm.avatar === av
                                                 ? 'bg-emerald-50 border-[#00C48C] ring-2 ring-[#00C48C]/30'
-                                                : 'bg-slate-50 border-slate-200'
+                                                : 'bg-white border-slate-200 hover:border-[#00C48C]'
                                         }`}
                                     >
                                         {av}
@@ -313,7 +190,7 @@
     }
 
     // ========================================================================
-    // 5. 내 프로필 수정 모달
+    // 5. 내 프로필 수정 모달 (여행 테마 이모지 36종 그리드)
     // ========================================================================
     function EditMyProfileModal({ isOpen, currentProfile, form, setForm, onClose, onSubmit }) {
         if (!isOpen || !currentProfile) return null;
@@ -321,25 +198,30 @@
 
         return (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
                     <div className="flex justify-between items-center">
                         <h3 className="text-lg font-extrabold text-slate-800">⚙️ 내 프로필 수정</h3>
                         <button onClick={onClose} className="text-slate-400">✕</button>
                     </div>
                     <form onSubmit={onSubmit} className="space-y-4">
-                        <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-                            {avatars.map(av => (
-                                <button
-                                    type="button"
-                                    key={av}
-                                    onClick={() => setForm({ ...form, avatar: av })}
-                                    className={`w-9 h-9 rounded-xl text-lg flex items-center justify-center shrink-0 border ${
-                                        form.avatar === av ? 'bg-emerald-50 border-[#00C48C]' : 'bg-slate-50 border-slate-200'
-                                    }`}
-                                >
-                                    {av}
-                                </button>
-                            ))}
+                        <div>
+                            <label className="block text-xs font-bold text-slate-600 mb-1.5">여행 테마 아이콘 ({avatars.length}종)</label>
+                            <div className="grid grid-cols-6 sm:grid-cols-9 gap-1.5 max-h-36 overflow-y-auto p-2 bg-slate-50 rounded-2xl border border-slate-200">
+                                {avatars.map(av => (
+                                    <button
+                                        type="button"
+                                        key={av}
+                                        onClick={() => setForm({ ...form, avatar: av })}
+                                        className={`h-9 rounded-xl text-lg flex items-center justify-center border transition ${
+                                            form.avatar === av
+                                                ? 'bg-emerald-50 border-[#00C48C] ring-2 ring-[#00C48C]/30'
+                                                : 'bg-white border-slate-200 hover:border-[#00C48C]'
+                                        }`}
+                                    >
+                                        {av}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                         <div>
                             <label className="block text-xs font-bold text-slate-600 mb-1">이름</label>
@@ -374,251 +256,7 @@
     // ========================================================================
     // 6. 총괄 관리자용 사용자 관리 모달
     // ========================================================================
-    function UserManageModal({
-        isOpen,
-        isAdmin,
-        activeUserKey,
-        registeredProfiles,
-        onClose,
-        onToggleAdmin,
-        onResetPassword,
-        onDeleteUser
-    }) {
-        const [editingUserPinKey, setEditingUserPinKey] = useState(null);
-        const [newPinForUser, setNewPinForUser] = useState('');
-
-        if (!isOpen || !isAdmin) return null;
-        const U = getU();
-
-        return (
-            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-                    <div className="flex justify-between items-center">
-                        <h3 className="text-lg font-extrabold text-slate-800">👑 사용자 관리 ({Object.keys(registeredProfiles).length}명)</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
-                    </div>
-
-                    <div className="space-y-2.5">
-                        {Object.entries(registeredProfiles).map(([uKey, prof]) => {
-                            if (!prof || !prof.name) return null;
-                            const isTargetSelf = U.sanitizeKey(uKey) === activeUserKey;
-                            const isTargetAdmin = Boolean(prof.isAdmin);
-                            const securityLabel = prof.secretMode === 'zero-download'
-                                ? '🛡️ 무유출 보안 적용됨'
-                                : (prof.pinHash ? '🔒 해시 보호 (재로그인 시 무유출 자동 전환)' : '평문 (재로그인 시 자동 암호화)');
-
-                            return (
-                                <div key={uKey} className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50 space-y-2">
-                                    <div className="flex items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2.5">
-                                            <span className="text-xl">{prof.avatar || '✈️'}</span>
-                                            <div>
-                                                <div className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
-                                                    <span>{prof.name}</span>
-                                                    {isTargetAdmin && (
-                                                        <span className="text-[10px] bg-amber-300 text-slate-950 px-1.5 py-0.5 rounded-full font-black">관리자</span>
-                                                    )}
-                                                </div>
-                                                <div className="text-[11px] text-slate-500">
-                                                    보안 상태: <span className="font-bold text-[#00A878]">{securityLabel}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                                            {!isTargetSelf && (
-                                                <button
-                                                    onClick={() => onToggleAdmin(uKey, prof)}
-                                                    className="text-[11px] font-bold bg-white border border-slate-200 px-2.5 py-1 rounded-lg"
-                                                >
-                                                    {isTargetAdmin ? '관리자 해제' : '관리자 지정'}
-                                                </button>
-                                            )}
-                                            <button
-                                                onClick={() => {
-                                                    setEditingUserPinKey(editingUserPinKey === uKey ? null : uKey);
-                                                    setNewPinForUser('');
-                                                }}
-                                                className="text-[11px] font-bold bg-white border border-slate-200 px-2.5 py-1 rounded-lg"
-                                            >
-                                                비밀번호 변경
-                                            </button>
-                                            {!isTargetSelf && !isTargetAdmin && (
-                                                <button
-                                                    onClick={() => onDeleteUser(uKey, prof)}
-                                                    className="text-[11px] font-bold text-rose-500 px-2 py-1"
-                                                >
-                                                    삭제
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-
-                                    {editingUserPinKey === uKey && (
-                                        <div className="flex gap-2 pt-2 border-t border-slate-200">
-                                            <input
-                                                type="password"
-                                                placeholder="새 비밀번호 4자리 이상 입력"
-                                                value={newPinForUser}
-                                                onChange={(e) => setNewPinForUser(e.target.value)}
-                                                className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-mono font-bold"
-                                            />
-                                            <button
-                                                onClick={async () => {
-                                                    const ok = await onResetPassword(uKey, prof, newPinForUser);
-                                                    if (ok) {
-                                                        setEditingUserPinKey(null);
-                                                        setNewPinForUser('');
-                                                    }
-                                                }}
-                                                className="bg-[#00C48C] text-white text-xs font-bold px-3.5 py-1.5 rounded-lg"
-                                            >
-                                                저장
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 7. 여행 멤버 및 초대 관리 모달
-    // ========================================================================
-    function MemberModal({
-        isOpen,
-        currentTrip,
-        companions,
-        registeredProfiles,
-        activeUserKey,
-        isOwnerOrAdmin,
-        onClose,
-        onChangeVisibility,
-        onInviteUser,
-        onAddManualCompanion,
-        onKickCompanion,
-        onLeaveTrip
-    }) {
-        const [newCompanionName, setNewCompanionName] = useState('');
-        if (!isOpen || !currentTrip) return null;
-        const U = getU();
-
-        return (
-            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
-                    <div className="flex justify-between items-center">
-                        <h3 className="text-lg font-extrabold text-slate-800">👥 여행 멤버 및 초대 관리</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
-                    </div>
-
-                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
-                        <div>
-                            <div className="text-xs font-extrabold text-slate-800">
-                                {currentTrip.visibility === 'private' ? '🔒 개인 보관 여행' : `👥 공유 여행 (초대코드: ${currentTrip.shareCode})`}
-                            </div>
-                            <div className="text-[11px] text-slate-500">개설자: {currentTrip.ownerName}</div>
-                        </div>
-                        {isOwnerOrAdmin && (
-                            <div className="flex gap-1.5">
-                                <button
-                                    onClick={() => onChangeVisibility('private')}
-                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold ${currentTrip.visibility === 'private' ? 'bg-indigo-600 text-white' : 'bg-white border border-slate-200'}`}
-                                >
-                                    🔒 개인
-                                </button>
-                                <button
-                                    onClick={() => onChangeVisibility('shared')}
-                                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold ${currentTrip.visibility !== 'private' ? 'bg-[#00C48C] text-white' : 'bg-white border border-slate-200'}`}
-                                >
-                                    👥 공유
-                                </button>
-                            </div>
-                        )}
-                    </div>
-
-                    {isOwnerOrAdmin && (
-                        <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200 space-y-2.5">
-                            <div className="text-xs font-extrabold text-teal-900">📲 등록된 계정 클릭하여 바로 초대</div>
-                            <div className="flex flex-wrap gap-1.5">
-                                {Object.entries(registeredProfiles).map(([uKey, prof]) => {
-                                    if (!prof || !prof.name) return null;
-                                    const alreadyIn = companions.some(c => U.sanitizeKey(c.userKey || c.name) === U.sanitizeKey(uKey));
-                                    return (
-                                        <button
-                                            key={uKey}
-                                            type="button"
-                                            disabled={alreadyIn}
-                                            onClick={() => onInviteUser(uKey)}
-                                            className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 border ${
-                                                alreadyIn
-                                                    ? 'bg-slate-100 text-slate-400 border-slate-200'
-                                                    : 'bg-white hover:bg-emerald-100 text-teal-900 border-emerald-300 shadow-2xs'
-                                            }`}
-                                        >
-                                            <span>{prof.avatar || '✈️'} {prof.name}</span>
-                                            <span className="text-[10px]">{alreadyIn ? '(참여중)' : '+ 초대'}</span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-
-                    {isOwnerOrAdmin && (
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                if (!newCompanionName.trim()) return;
-                                onAddManualCompanion(newCompanionName.trim());
-                                setNewCompanionName('');
-                            }}
-                            className="flex gap-2"
-                        >
-                            <input
-                                type="text"
-                                placeholder="비회원 동행자 이름 직접 추가"
-                                value={newCompanionName}
-                                onChange={(e) => setNewCompanionName(e.target.value)}
-                                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-bold"
-                            />
-                            <button type="submit" className="bg-[#00C48C] text-white text-xs font-extrabold px-4 py-2 rounded-xl shrink-0">멤버 등록</button>
-                        </form>
-                    )}
-
-                    <div className="space-y-2">
-                        {companions.map((comp, idx) => {
-                            const compKey = U.sanitizeKey(comp.userKey || comp.name);
-                            const isMe = compKey === activeUserKey;
-                            return (
-                                <div key={comp.id} className="flex items-center justify-between p-3 rounded-2xl border border-slate-200 bg-slate-50">
-                                    <div className="flex items-center gap-2.5">
-                                        <span className="text-lg">{comp.avatar || '✈️'}</span>
-                                        <span className="text-xs font-extrabold text-slate-800">{comp.name}</span>
-                                        {idx === 0 && (
-                                            <span className="text-[10px] bg-emerald-100 text-[#00A878] px-2 py-0.5 rounded-full font-extrabold">개설자</span>
-                                        )}
-                                    </div>
-                                    {idx > 0 && isOwnerOrAdmin && (
-                                        <button onClick={() => onKickCompanion(comp)} className="text-xs font-bold text-rose-500">퇴출</button>
-                                    )}
-                                    {idx > 0 && !isOwnerOrAdmin && isMe && (
-                                        <button onClick={() => { onClose(); onLeaveTrip(); }} className="text-xs font-bold text-rose-500">나가기</button>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 8. 장소 추가 / 수정 모달
+    // 8. 장소 추가 / 수정 모달 (비용 용어 통일 + 예약/바우처 링크 추가)
     // ========================================================================
     function PlaceModal({
         isOpen,
@@ -751,9 +389,10 @@
 
                         <div className="grid grid-cols-3 gap-2">
                             <div className="col-span-2">
-                                <label className="block text-xs font-bold text-slate-600 mb-1">예상 비용 (선택)</label>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">비용 (선택)</label>
                                 <input
                                     type="number"
+                                    placeholder="예상 또는 실제 지출 금액"
                                     value={newPlace.cost}
                                     onChange={(e) => setNewPlace({ ...newPlace, cost: e.target.value })}
                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm font-bold"
@@ -769,6 +408,17 @@
                                     {Object.keys(CURRENCIES).map(code => <option key={code} value={code}>{code}</option>)}
                                 </select>
                             </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">🔗 예약 / 바우처 / 참고 링크 (선택)</label>
+                            <input
+                                type="text"
+                                placeholder="https://... (예약 확인, 블로그, 구글 드라이브 등)"
+                                value={newPlace.linkUrl || ''}
+                                onChange={(e) => setNewPlace({ ...newPlace, linkUrl: e.target.value })}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs"
+                            />
                         </div>
 
                         <div>
@@ -792,7 +442,7 @@
     }
 
     // ========================================================================
-    // 9. 가계부 지출 추가 / 수정 모달
+    // 9. 가계부 지출 추가 / 수정 모달 (일정 장소 드롭다운 + 영수증 사진/링크 첨부)
     // ========================================================================
     function ExpenseModal({
         isOpen,
@@ -802,14 +452,88 @@
         editingExpenseId,
         newExpense,
         setNewExpense,
+        isSavingExpense,
+        onPreviewExistingReceipt,
         onClose,
         onSubmit
     }) {
+        const [isCompressing, setIsCompressing] = useState(false);
+        const [receiptError, setReceiptError] = useState('');
+        const fileInputRef = useRef(null);
+
+        useEffect(() => {
+            if (isOpen) {
+                setReceiptError('');
+                setIsCompressing(false);
+            }
+        }, [isOpen]);
+
         if (!isOpen || !currentTrip) return null;
         const U = getU();
         const P = getP();
         const CATEGORY_META = P.categoryMeta || {};
         const CURRENCIES = P.currencies || {};
+        const itineraryMap = currentTrip.itinerary || {};
+
+        // 전체 일차의 일정 장소를 맵으로 정리 (1:N 다중 지출 연동용)
+        const allPlacesByDay = tripDays.map(d => ({
+            day: Number(d),
+            items: toArr(itineraryMap[d])
+        })).filter(group => group.items.length > 0);
+
+        const selectedExpDay = Number(newExpense.day) || 0;
+        const currentDayGroup = allPlacesByDay.find(g => g.day === selectedExpDay);
+        const otherDayGroups = allPlacesByDay.filter(g => g.day !== selectedExpDay);
+
+        const findPlaceById = (pid) => {
+            for (let i = 0; i < allPlacesByDay.length; i++) {
+                const hit = allPlacesByDay[i].items.find(it => it.id === pid);
+                if (hit) return { item: hit, day: allPlacesByDay[i].day };
+            }
+            return null;
+        };
+
+        const handleSelectLinkedPlace = (placeId) => {
+            if (!placeId) {
+                setNewExpense({ ...newExpense, linkedPlaceId: '', linkedPlaceName: '' });
+                return;
+            }
+            const found = findPlaceById(placeId);
+            if (!found) {
+                setNewExpense({ ...newExpense, linkedPlaceId: '', linkedPlaceName: '' });
+                return;
+            }
+            const shouldAutoFillTitle = !String(newExpense.title || '').trim();
+            setNewExpense({
+                ...newExpense,
+                linkedPlaceId: found.item.id,
+                linkedPlaceName: found.item.place,
+                title: shouldAutoFillTitle ? found.item.place : newExpense.title,
+                category: shouldAutoFillTitle && found.item.category ? found.item.category : newExpense.category
+            });
+        };
+
+        const handleReceiptFileChange = async (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (!file) return;
+            setReceiptError('');
+            setIsCompressing(true);
+            try {
+                const compressed = await U.compressImageToDataUrl(file, 900, 0.72);
+                setNewExpense({
+                    ...newExpense,
+                    pendingReceipt: compressed,
+                    removeReceipt: false
+                });
+            } catch (err) {
+                setReceiptError(err?.message || '영수증 이미지 압축에 실패했습니다.');
+            } finally {
+                setIsCompressing(false);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            }
+        };
+
+        const hasExistingActiveReceipt = Boolean(newExpense.hasReceipt && !newExpense.removeReceipt && !newExpense.pendingReceipt);
 
         return (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -818,7 +542,7 @@
                         <h3 className="text-lg font-extrabold text-slate-800">{editingExpenseId ? '✏️ 지출 내역 수정' : '💰 새 지출 기록'}</h3>
                         <button onClick={onClose} className="text-slate-400">✕</button>
                     </div>
-                    <form onSubmit={onSubmit} className="space-y-4">
+                    <form onSubmit={onSubmit} className="space-y-3.5">
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs font-bold text-slate-600 mb-1">지출 시점</label>
@@ -847,10 +571,46 @@
                             </div>
                         </div>
 
+                        {/* 일정 장소 연동 드롭다운 */}
+                        <div>
+                            <label className="block text-xs font-bold text-slate-600 mb-1">
+                                📍 지출 장소 (일정 연동 · 선택)
+                            </label>
+                            <select
+                                value={newExpense.linkedPlaceId || ''}
+                                onChange={(e) => handleSelectLinkedPlace(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                            >
+                                <option value="">연동 안 함 (일반 지출로 기록)</option>
+                                {currentDayGroup && (
+                                    <optgroup label={`📌 ${currentDayGroup.day}일차 등록 일정`}>
+                                        {currentDayGroup.items.map(it => (
+                                            <option key={it.id} value={it.id}>
+                                                {it.time ? `[${it.time}] ` : ''}{it.place}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                )}
+                                {otherDayGroups.map(grp => (
+                                    <optgroup key={grp.day} label={`${grp.day}일차 일정`}>
+                                        {grp.items.map(it => (
+                                            <option key={it.id} value={it.id}>
+                                                {grp.day}일차 · {it.time ? `[${it.time}] ` : ''}{it.place}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                ))}
+                            </select>
+                            <p className="text-[10px] text-slate-400 mt-1">
+                                한 장소에서 여러 번 지출해도 동일한 일정 장소를 선택해 누적 관리할 수 있습니다.
+                            </p>
+                        </div>
+
                         <div>
                             <label className="block text-xs font-bold text-slate-600 mb-1">지출 항목명</label>
                             <input
                                 type="text"
+                                placeholder="예: 입장권, 점심 식사, 기념품 구매"
                                 value={newExpense.title}
                                 onChange={(e) => setNewExpense({ ...newExpense, title: e.target.value })}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold"
@@ -932,400 +692,111 @@
                             </div>
                         </div>
 
-                        <div className="flex gap-2 pt-2">
-                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
-                            <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">저장</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 10. 새 여행 만들기 모달
-    // ========================================================================
-    function NewTripModal({
-        isOpen,
-        form,
-        setForm,
-        registeredProfiles,
-        activeUserKey,
-        onClose,
-        onSubmit
-    }) {
-        if (!isOpen) return null;
-        const U = getU();
-        const P = getP();
-        const COUNTRY_PRESETS = P.countryPresets || {};
-        const CURRENCIES = P.currencies || {};
-
-        return (
-            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
-                    <div className="flex justify-between items-center mb-4">
-                        <h3 className="text-lg font-extrabold text-slate-800">✈️ 새 여행 플래너 만들기</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
-                    </div>
-                    <form onSubmit={onSubmit} className="space-y-4">
-                        <div className="grid grid-cols-2 gap-2">
-                            <button
-                                type="button"
-                                onClick={() => setForm({ ...form, visibility: 'private' })}
-                                className={`p-3 rounded-2xl border text-left ${form.visibility === 'private' ? 'bg-indigo-50 border-indigo-500' : 'border-slate-200'}`}
-                            >
-                                <div className="text-xs font-extrabold text-indigo-900">🔒 나만 보기 (개인)</div>
-                                <div className="text-[10px] text-slate-500 mt-0.5">내 계정에만 비공개 보관</div>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setForm({ ...form, visibility: 'shared' })}
-                                className={`p-3 rounded-2xl border text-left ${form.visibility === 'shared' ? 'bg-emerald-50 border-[#00C48C]' : 'border-slate-200'}`}
-                            >
-                                <div className="text-xs font-extrabold text-[#00A878]">👥 함께 보기 (공유)</div>
-                                <div className="text-[10px] text-slate-500 mt-0.5">동행자 초대 및 공동 편집</div>
-                            </button>
-                        </div>
-
-                        {form.visibility === 'shared' && (
-                            <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200 space-y-2">
-                                <label className="block text-xs font-extrabold text-teal-900">👥 함께할 등록 계정 초대 (선택)</label>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {Object.entries(registeredProfiles)
-                                        .filter(([uKey, prof]) => prof && prof.name && U.sanitizeKey(uKey) !== activeUserKey)
-                                        .map(([uKey, prof]) => {
-                                            const isSelected = form.invitedUserKeys.includes(uKey);
-                                            return (
-                                                <button
-                                                    type="button"
-                                                    key={uKey}
-                                                    onClick={() => {
-                                                        const next = isSelected
-                                                            ? form.invitedUserKeys.filter(k => k !== uKey)
-                                                            : [...form.invitedUserKeys, uKey];
-                                                        setForm({ ...form, invitedUserKeys: next });
-                                                    }}
-                                                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1 transition ${
-                                                        isSelected ? 'bg-[#00C48C] text-white border-[#00C48C]' : 'bg-white text-slate-700 border-slate-200'
-                                                    }`}
-                                                >
-                                                    <span>{prof.avatar || '✈️'} {prof.name}</span>
-                                                    {isSelected && <span>✓</span>}
-                                                </button>
-                                            );
-                                        })}
-                                </div>
-                            </div>
-                        )}
-
-                        <div>
-                            <label className="block text-xs font-bold text-slate-600 mb-1">여행 명칭</label>
-                            <input
-                                type="text"
-                                placeholder="예: 제주 힐링 여행"
-                                value={form.title}
-                                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-bold"
-                                required
-                            />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">국가</label>
-                                <select
-                                    value={form.country}
-                                    onChange={(e) => {
-                                        const c = e.target.value;
-                                        const meta = COUNTRY_PRESETS[c] || COUNTRY_PRESETS['직접 입력'];
-                                        setForm({
-                                            ...form,
-                                            country: c,
-                                            city: (meta && meta.cities && meta.cities[0]) || '직접 입력',
-                                            currency: (meta && meta.currency) || 'USD'
-                                        });
-                                    }}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
-                                >
-                                    {Object.keys(COUNTRY_PRESETS).map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">도시</label>
-                                <select
-                                    value={form.city}
-                                    onChange={(e) => setForm({ ...form, city: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
-                                >
-                                    {((COUNTRY_PRESETS[form.country] && COUNTRY_PRESETS[form.country].cities) || ['직접 입력']).map(city => (
-                                        <option key={city} value={city}>{city}</option>
-                                    ))}
-                                    {form.country !== '직접 입력' && <option value="직접 입력">직접 입력</option>}
-                                </select>
-                            </div>
-                        </div>
-
-                        {(form.country === '직접 입력' || form.city === '직접 입력') && (
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">국가/도시 직접 입력</label>
+                        {/* 영수증 사진 첨부 + 외부 링크(구글 드라이브 등) */}
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 space-y-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs font-extrabold text-slate-700">🧾 영수증 첨부 (선택)</span>
                                 <input
-                                    type="text"
-                                    placeholder="예: 캐나다 밴쿠버"
-                                    value={form.customDestination}
-                                    onChange={(e) => setForm({ ...form, customDestination: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm"
-                                    required
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleReceiptFileChange}
+                                    className="hidden"
                                 />
-                            </div>
-                        )}
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">출발일</label>
-                                <CustomDateInput value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} required />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">도착일</label>
-                                <CustomDateInput value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} required />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">대표 통화 (자동 연동)</label>
-                                <select
-                                    value={form.currency}
-                                    onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
+                                <button
+                                    type="button"
+                                    disabled={isCompressing}
+                                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                                    className="bg-white hover:bg-emerald-50 text-[#00A878] border border-emerald-200 px-3 py-1.5 rounded-xl text-[11px] font-extrabold"
                                 >
-                                    {Object.keys(CURRENCIES).map(code => <option key={code} value={code}>{CURRENCIES[code].name}</option>)}
-                                </select>
+                                    {isCompressing ? '압축 중...' : '📷 사진 촬영 / 선택'}
+                                </button>
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">목표 예산 (원화)</label>
-                                <input
-                                    type="number"
-                                    value={form.budgetKRW}
-                                    onChange={(e) => setForm({ ...form, budgetKRW: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
-                                />
-                            </div>
-                        </div>
 
-                        <div className="flex gap-2 pt-2">
-                            <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
-                            <button type="submit" className="flex-1 py-3 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">여행 생성하기</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        );
-    }
+                            {receiptError && (
+                                <div className="text-[11px] font-bold text-rose-500">{receiptError}</div>
+                            )}
 
-    // ========================================================================
-    // 11. 여행 정보 및 기간 수정 모달
-    // ========================================================================
-    function EditTripModal({ isOpen, currentTrip, form, setForm, onClose, onSubmit }) {
-        if (!isOpen || !currentTrip) return null;
-        const P = getP();
-        const COUNTRY_PRESETS = P.countryPresets || {};
-        const CURRENCIES = P.currencies || {};
-
-        return (
-            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-                    <div className="flex justify-between items-center">
-                        <h3 className="text-lg font-extrabold text-slate-800">✏️ 여행 정보 및 기간 수정</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
-                    </div>
-                    <form onSubmit={onSubmit} className="space-y-3.5">
-                        <div>
-                            <label className="block text-xs font-bold text-slate-600 mb-1">여행 명칭</label>
-                            <input
-                                type="text"
-                                value={form.title}
-                                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm font-bold"
-                                required
-                            />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">국가</label>
-                                <select
-                                    value={form.country}
-                                    onChange={(e) => {
-                                        const c = e.target.value;
-                                        const meta = COUNTRY_PRESETS[c] || COUNTRY_PRESETS['직접 입력'];
-                                        setForm({
-                                            ...form,
-                                            country: c,
-                                            city: (meta && meta.cities && meta.cities[0]) || '직접 입력',
-                                            currency: (meta && meta.currency) || 'USD'
-                                        });
-                                    }}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
-                                >
-                                    {Object.keys(COUNTRY_PRESETS).map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">도시</label>
-                                <select
-                                    value={form.city}
-                                    onChange={(e) => setForm({ ...form, city: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
-                                >
-                                    {((COUNTRY_PRESETS[form.country] && COUNTRY_PRESETS[form.country].cities) || ['직접 입력']).map(city => (
-                                        <option key={city} value={city}>{city}</option>
-                                    ))}
-                                    {form.country !== '직접 입력' && <option value="직접 입력">직접 입력</option>}
-                                </select>
-                            </div>
-                        </div>
-                        {(form.country === '직접 입력' || form.city === '직접 입력') && (
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">국가/도시 직접 입력</label>
-                                <input
-                                    type="text"
-                                    value={form.customDestination}
-                                    onChange={(e) => setForm({ ...form, customDestination: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm"
-                                    required
-                                />
-                            </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">출발일</label>
-                                <CustomDateInput value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} required />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">도착일</label>
-                                <CustomDateInput value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} required />
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">대표 현지 통화</label>
-                                <select
-                                    value={form.currency}
-                                    onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
-                                >
-                                    {Object.keys(CURRENCIES).map(code => <option key={code} value={code}>{CURRENCIES[code].name}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-600 mb-1">목표 예산 (원화)</label>
-                                <input
-                                    type="number"
-                                    value={form.budgetKRW}
-                                    onChange={(e) => setForm({ ...form, budgetKRW: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
-                                />
-                            </div>
-                        </div>
-                        <div className="flex gap-2 pt-2">
-                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
-                            <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">저장 완료</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 12. 통화 · 일자별 적용 환율 설정 모달
-    // ========================================================================
-    function RateModal({ isOpen, currentTrip, tripDays, onClose, onUpdateBaseRate, onUpdateDailyRate }) {
-        if (!isOpen || !currentTrip) return null;
-        const U = getU();
-        const P = getP();
-        const CURRENCIES = P.currencies || {};
-
-        return (
-            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-                    <div className="flex justify-between items-center">
-                        <h3 className="text-lg font-extrabold text-slate-800">💱 통화 · 일자별 적용 환율</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
-                    </div>
-
-                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2.5">
-                        <h4 className="text-xs font-extrabold text-slate-700">1. 통화별 기본 환율 (전 기간 기본 적용)</h4>
-                        <div className="grid grid-cols-2 gap-2.5">
-                            {Object.keys(CURRENCIES).filter(c => c !== 'KRW').map(code => {
-                                const unit = CURRENCIES[code].unit || 1;
-                                const rawVal = (currentTrip.baseRates && currentTrip.baseRates[code]) !== undefined
-                                    ? currentTrip.baseRates[code]
-                                    : CURRENCIES[code].defaultRate;
-                                return (
-                                    <div key={code} className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between gap-2">
-                                        <span className="text-xs font-extrabold text-slate-700">{unit} {code} =</span>
-                                        <div className="flex items-center gap-1">
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                value={U.normalizeRateValue(code, rawVal)}
-                                                onChange={(e) => onUpdateBaseRate(code, Number(e.target.value))}
-                                                className="w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-right"
-                                            />
-                                            <span className="text-[11px] text-slate-400">원</span>
+                            {/* 새로 첨부된 압축 이미지 미리보기 */}
+                            {newExpense.pendingReceipt && newExpense.pendingReceipt.dataUrl && (
+                                <div className="bg-white rounded-xl p-2 border border-emerald-200 flex items-center gap-3">
+                                    <img
+                                        src={newExpense.pendingReceipt.dataUrl}
+                                        alt="영수증 미리보기"
+                                        className="w-14 h-14 object-cover rounded-lg border border-slate-200 shrink-0"
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-extrabold text-[#00A878]">✅ 영수증 준비 완료</div>
+                                        <div className="text-[10px] text-slate-400">
+                                            자동 경량 압축 ({newExpense.pendingReceipt.sizeKB}KB) · 저장 시 분리 업로드
                                         </div>
                                     </div>
-                                );
-                            })}
-                        </div>
-                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setNewExpense({ ...newExpense, pendingReceipt: null })}
+                                        className="text-[11px] font-bold text-rose-500 px-2 py-1"
+                                    >
+                                        취소
+                                    </button>
+                                </div>
+                            )}
 
-                    {currentTrip.currency !== 'KRW' && (
-                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2.5">
-                            <div className="flex items-center justify-between">
-                                <h4 className="text-xs font-extrabold text-slate-700">
-                                    2. 일자별 [{(CURRENCIES[currentTrip.currency] && CURRENCIES[currentTrip.currency].unit) || 1} {currentTrip.currency}] 개별 환율 지정 (선택)
-                                </h4>
-                                <span className="text-[10px] text-slate-400">비워두면 기본 환율 적용</span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                {[0, ...tripDays].map(d => {
-                                    const label = d === 0 ? '✈️ 사전 지출' : `${d}일차 (${U.getDayDateDot(currentTrip.startDate, d, false)})`;
-                                    const customVal = (currentTrip.dailyRates && currentTrip.dailyRates[d] && currentTrip.dailyRates[d][currentTrip.currency]) || '';
-                                    const placeholderVal = U.normalizeRateValue(
-                                        currentTrip.currency,
-                                        (currentTrip.baseRates && currentTrip.baseRates[currentTrip.currency]) ||
-                                        (CURRENCIES[currentTrip.currency] && CURRENCIES[currentTrip.currency].defaultRate)
-                                    );
-                                    return (
-                                        <div key={d} className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between gap-2">
-                                            <span className="text-[11px] font-bold text-slate-700 truncate">{label}</span>
-                                            <div className="flex items-center gap-1 shrink-0">
-                                                <input
-                                                    type="number"
-                                                    step="0.01"
-                                                    placeholder={String(placeholderVal)}
-                                                    value={customVal}
-                                                    onChange={(e) => onUpdateDailyRate(d, currentTrip.currency, e.target.value)}
-                                                    className="w-16 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-right"
-                                                />
-                                                <span className="text-[10px] text-slate-400">원</span>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                            {/* 수정 모드에서 기존 영수증이 있는 경우 */}
+                            {hasExistingActiveReceipt && (
+                                <div className="bg-white rounded-xl p-2.5 border border-emerald-200 flex items-center justify-between gap-2">
+                                    <span className="text-[11px] font-extrabold text-[#00A878]">✅ 저장된 영수증 사진 있음</span>
+                                    <div className="flex items-center gap-1.5">
+                                        {onPreviewExistingReceipt && editingExpenseId && (
+                                            <button
+                                                type="button"
+                                                onClick={() => onPreviewExistingReceipt(editingExpenseId)}
+                                                className="text-[11px] font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg"
+                                            >
+                                                보기
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => setNewExpense({ ...newExpense, removeReceipt: true })}
+                                            className="text-[11px] font-bold text-rose-500 px-2 py-1"
+                                        >
+                                            삭제
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div>
+                                <input
+                                    type="text"
+                                    placeholder="🔗 구글 드라이브 영수증 링크 등 URL (선택)"
+                                    value={newExpense.receiptUrl || ''}
+                                    onChange={(e) => setNewExpense({ ...newExpense, receiptUrl: e.target.value })}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                                />
                             </div>
                         </div>
-                    )}
 
-                    <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">확인</button>
+                        <div className="flex gap-2 pt-2">
+                            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                            <button
+                                type="submit"
+                                disabled={isCompressing || isSavingExpense}
+                                className="flex-1 py-2.5 rounded-xl bg-[#00C48C] disabled:opacity-60 text-white text-xs font-extrabold"
+                            >
+                                {isSavingExpense ? '저장 중...' : '저장'}
+                            </button>
+                        </div>
+                    </form>
                 </div>
             </div>
         );
     }
 
     // ========================================================================
-    // 13. [v0.2.0 고도화] 상세 정산 & 중간 정산 관리 모달
+    // 9. 가계부 지출 추가 / 수정 모달
+    // ========================================================================
+    // 13. [v0.2.2 고도화] 상세 정산 · 날짜별/다회차 중간 정산 & 롤백 모달
     // ========================================================================
     function SettlementModal({
         isOpen,
@@ -1337,25 +808,44 @@
         onAddManualSettlement,
         onDeleteSettlement
     }) {
+        const U = getU();
         const [showManualForm, setShowManualForm] = useState(false);
         const [manualForm, setManualForm] = useState({
             fromId: '',
             toId: '',
             amountKRW: '',
+            date: '',
             memo: ''
         });
 
-        if (!isOpen || !currentTrip) return null;
-        const U = getU();
-        const findComp = (cid) => companions.find(c => c.id === cid) || { name: '알 수 없음', avatar: '👤' };
+        useEffect(() => {
+            if (!isOpen) {
+                setShowManualForm(false);
+            }
+        }, [isOpen]);
 
-        const openManualForm = () => {
-            setManualForm({
-                fromId: (companions[1] && companions[1].id) || (companions[0] && companions[0].id) || '',
-                toId: (companions[0] && companions[0].id) || '',
-                amountKRW: '',
-                memo: '중간 정산 송금'
-            });
+        if (!isOpen || !currentTrip) return null;
+        const findComp = (cid) => companions.find(c => c.id === cid) || { name: '알 수 없음', avatar: '👤' };
+        const todayIso = U.getTodayIso ? U.getTodayIso() : new Date().toISOString().slice(0, 10);
+
+        const openManualForm = (presetTransfer) => {
+            if (presetTransfer) {
+                setManualForm({
+                    fromId: presetTransfer.fromId,
+                    toId: presetTransfer.toId,
+                    amountKRW: String(presetTransfer.amount || ''),
+                    date: todayIso,
+                    memo: '중간 정산 송금'
+                });
+            } else {
+                setManualForm({
+                    fromId: (companions[1] && companions[1].id) || (companions[0] && companions[0].id) || '',
+                    toId: (companions[0] && companions[0].id) || '',
+                    amountKRW: '',
+                    date: todayIso,
+                    memo: '중간 정산 송금'
+                });
+            }
             setShowManualForm(true);
         };
 
@@ -1366,6 +856,7 @@
                 fromId: manualForm.fromId,
                 toId: manualForm.toId,
                 amountKRW: Number(manualForm.amountKRW) || 0,
+                date: manualForm.date || todayIso,
                 memo: manualForm.memo.trim() || '중간 정산 송금'
             });
             if (ok) {
@@ -1378,9 +869,9 @@
                 <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto border border-slate-200">
                     <div className="flex justify-between items-center border-b border-slate-200 pb-3">
                         <div>
-                            <h3 className="text-lg font-extrabold text-slate-800">📊 상세 정산 및 중간 정산 관리</h3>
+                            <h3 className="text-lg font-extrabold text-slate-800">📊 상세 정산 · 다회차 중간 정산</h3>
                             <p className="text-[11px] text-slate-400 mt-0.5">
-                                총 지출({budgetSummary.totalSpentKRW.toLocaleString()}원)은 그대로 보존되며, 이미 주고받은 금액만 상계됩니다.
+                                사람별 이체 날짜와 분할 송금을 여러 번 기록하고, 실수 시 언제든 롤백할 수 있습니다.
                             </p>
                         </div>
                         <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
@@ -1425,11 +916,11 @@
                                     </div>
                                     {(b.sent > 0 || b.received > 0) && (
                                         <div className="text-[11px] text-sky-700 flex justify-between">
-                                            <span>중간 정산 반영</span>
+                                            <span>중간 정산 누적</span>
                                             <span className="font-bold">
-                                                {b.sent > 0 ? `송금 +${b.sent.toLocaleString()}원` : ''}
+                                                {b.sent > 0 ? `송금 +${b.sent.toLocaleString()}원(${b.sentCount || 1}회)` : ''}
                                                 {b.sent > 0 && b.received > 0 ? ' / ' : ''}
-                                                {b.received > 0 ? `수령 -${b.received.toLocaleString()}원` : ''}
+                                                {b.received > 0 ? `수령 -${b.received.toLocaleString()}원(${b.receivedCount || 1}회)` : ''}
                                             </span>
                                         </div>
                                     )}
@@ -1442,17 +933,17 @@
                         </div>
                     </div>
 
-                    {/* 3) 남은 송금 가이드 + 원클릭 중간 정산 완료 */}
+                    {/* 3) 남은 송금 가이드 + 날짜·부분 정산 / 원클릭 전액 정산 */}
                     <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-2.5">
                         <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-extrabold text-[#00A878]">📢 남은 송금 가이드</span>
                             {companions.length >= 2 && (
                                 <button
                                     type="button"
-                                    onClick={() => showManualForm ? setShowManualForm(false) : openManualForm()}
+                                    onClick={() => showManualForm ? setShowManualForm(false) : openManualForm(null)}
                                     className="text-[11px] font-extrabold bg-white hover:bg-emerald-100 text-[#00A878] border border-emerald-300 px-2.5 py-1 rounded-lg"
                                 >
-                                    {showManualForm ? '닫기' : '+ 일부 금액 직접 정산'}
+                                    {showManualForm ? '닫기' : '+ 날짜·금액 직접 정산'}
                                 </button>
                             )}
                         </div>
@@ -1462,29 +953,39 @@
                         ) : (
                             <div className="space-y-2">
                                 {budgetSummary.transfers.map((t, i) => (
-                                    <div key={i} className="bg-white rounded-xl p-3 border border-emerald-200/80 flex items-center justify-between gap-2">
+                                    <div key={i} className="bg-white rounded-xl p-3 border border-emerald-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                                         <div className="text-xs font-bold text-slate-800">
                                             <span>{t.fromAvatar} {t.from}</span>
                                             <span className="text-[#00A878] font-black mx-1.5">➔</span>
                                             <span>{t.toAvatar} {t.to}</span>
                                             <div className="text-sm font-extrabold text-[#00A878] mt-0.5">{t.amount.toLocaleString()}원</div>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => onQuickSettle(t)}
-                                            className="bg-[#00C48C] hover:bg-[#00A878] text-white text-xs font-extrabold px-3 py-2 rounded-xl shrink-0 shadow-2xs"
-                                        >
-                                            ✅ 정산 완료
-                                        </button>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <button
+                                                type="button"
+                                                onClick={() => openManualForm(t)}
+                                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold px-2.5 py-2 rounded-xl"
+                                                title="이체 날짜를 지정하거나 일부 금액만 분할 정산합니다"
+                                            >
+                                                📅 날짜·분할
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => onQuickSettle(t)}
+                                                className="bg-[#00C48C] hover:bg-[#00A878] text-white text-[11px] font-extrabold px-3 py-2 rounded-xl shadow-2xs"
+                                            >
+                                                ✅ 오늘 전액
+                                            </button>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         )}
 
-                        {/* 일부 금액 직접 송금 입력 폼 */}
+                        {/* 날짜·분할 송금 입력 폼 */}
                         {showManualForm && (
                             <form onSubmit={handleManualSubmit} className="bg-white rounded-2xl p-3.5 border border-emerald-300 space-y-3 mt-2">
-                                <div className="text-xs font-extrabold text-slate-800">💸 중간 정산 송금 기록 직접 추가</div>
+                                <div className="text-xs font-extrabold text-slate-800">💸 중간 정산 송금 기록 추가 (날짜·분할 지원)</div>
                                 <div className="grid grid-cols-2 gap-2">
                                     <div>
                                         <label className="block text-[11px] font-bold text-slate-500 mb-1">보낸 사람</label>
@@ -1509,35 +1010,43 @@
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     <div>
+                                        <label className="block text-[11px] font-bold text-slate-500 mb-1">실제 이체 날짜</label>
+                                        <CustomDateInput
+                                            value={manualForm.date}
+                                            onChange={(e) => setManualForm({ ...manualForm, date: e.target.value })}
+                                            required
+                                        />
+                                    </div>
+                                    <div>
                                         <label className="block text-[11px] font-bold text-slate-500 mb-1">송금액 (원화 KRW)</label>
                                         <input
                                             type="number"
                                             placeholder="예: 200000"
                                             value={manualForm.amountKRW}
                                             onChange={(e) => setManualForm({ ...manualForm, amountKRW: e.target.value })}
-                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold"
                                             required
                                         />
                                     </div>
-                                    <div>
-                                        <label className="block text-[11px] font-bold text-slate-500 mb-1">메모 (선택)</label>
-                                        <input
-                                            type="text"
-                                            placeholder="예: 항공권 1차 정산"
-                                            value={manualForm.memo}
-                                            onChange={(e) => setManualForm({ ...manualForm, memo: e.target.value })}
-                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
-                                        />
-                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-[11px] font-bold text-slate-500 mb-1">메모 (선택 · 예: 1차 항공권 이체)</label>
+                                    <input
+                                        type="text"
+                                        placeholder="예: 1차 이체, 숙소비 선입금"
+                                        value={manualForm.memo}
+                                        onChange={(e) => setManualForm({ ...manualForm, memo: e.target.value })}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                                    />
                                 </div>
                                 <button type="submit" className="w-full py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">
-                                    송금 기록 반영하기
+                                    이체 기록 반영하기
                                 </button>
                             </form>
                         )}
                     </div>
 
-                    {/* 4) 중간 정산 완료 이력 (원장 리스트 + 취소 버튼) */}
+                    {/* 4) 중간 정산 완료 이력 (이체 날짜순 원장 리스트 + 안전 롤백 버튼) */}
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-extrabold text-slate-700">
@@ -1555,27 +1064,32 @@
                             </div>
                         ) : (
                             <div className="space-y-2">
-                                {budgetSummary.settlements.map(stl => {
+                                {budgetSummary.settlements.map((stl, idx) => {
                                     const fromC = findComp(stl.fromId);
                                     const toC = findComp(stl.toId);
+                                    const roundNum = budgetSummary.settlements.length - idx;
                                     return (
                                         <div key={stl.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex items-center justify-between gap-2">
-                                            <div>
-                                                <div className="text-xs font-extrabold text-slate-800">
-                                                    {fromC.avatar} {fromC.name} <span className="text-[#00A878]">➔</span> {toC.avatar} {toC.name}
-                                                    <span className="ml-2 text-[#00A878]">{Number(stl.amountKRW).toLocaleString()}원</span>
+                                            <div className="min-w-0">
+                                                <div className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                                    <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-black">#{roundNum}</span>
+                                                    <span>{fromC.avatar} {fromC.name}</span>
+                                                    <span className="text-[#00A878]">➔</span>
+                                                    <span>{toC.avatar} {toC.name}</span>
+                                                    <span className="text-[#00A878]">{Number(stl.amountKRW).toLocaleString()}원</span>
                                                 </div>
                                                 <div className="text-[11px] text-slate-400 mt-0.5">
-                                                    {U.formatDateDot ? U.formatDateDot(stl.date, true) : stl.date}
+                                                    📅 {U.formatDateDot ? U.formatDateDot(stl.date, true) : stl.date}
                                                     {stl.memo ? ` · ${stl.memo}` : ''}
                                                 </div>
                                             </div>
                                             <button
                                                 type="button"
                                                 onClick={() => onDeleteSettlement(stl, fromC, toC)}
-                                                className="text-[11px] font-bold text-rose-500 hover:bg-rose-50 px-2.5 py-1 rounded-lg shrink-0"
+                                                className="text-[11px] font-extrabold text-rose-500 hover:bg-rose-50 border border-rose-200 px-2.5 py-1.5 rounded-xl shrink-0"
+                                                title="이 정산 기록을 취소하고 미정산 잔액으로 되돌립니다"
                                             >
-                                                취소
+                                                ↩️ 롤백
                                             </button>
                                         </div>
                                     );
@@ -1593,35 +1107,7 @@
     // ========================================================================
     // 14. 일정 및 정산 공유 모달
     // ========================================================================
-    function ShareModal({ isOpen, currentTrip, shareText, onClose, onCopy }) {
-        if (!isOpen || !currentTrip) return null;
-
-        return (
-            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
-                    <div className="flex justify-between items-center">
-                        <h3 className="text-lg font-extrabold text-slate-800">📤 일정 및 정산 공유</h3>
-                        <button onClick={onClose} className="text-slate-400">✕</button>
-                    </div>
-                    <pre className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 max-h-64 overflow-y-auto text-xs font-mono whitespace-pre-wrap text-slate-700">
-                        {shareText}
-                    </pre>
-                    <button
-                        onClick={() => {
-                            onCopy(shareText);
-                            onClose();
-                        }}
-                        className="w-full py-3 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold"
-                    >
-                        📋 카카오톡 공유용 텍스트 복사
-                    </button>
-                </div>
-            </div>
-        );
-    }
-
-    // ========================================================================
-    // 15. 내 여행 보관함 모달 (개인 우선 -> 공유)
+    // 15. 내 여행 보관함 모달 (개인 우선 -> 공유 + D-Day 배지)
     // ========================================================================
     function TripListModal({
         isOpen,
@@ -1639,6 +1125,21 @@
     }) {
         if (!isOpen) return null;
         const U = getU();
+
+        const renderBadge = (t) => {
+            const st = U.getTripStatusBadge ? U.getTripStatusBadge(t) : null;
+            if (!st) return null;
+            const cls = st.tone === 'active'
+                ? 'bg-amber-100 text-amber-800 border-amber-200'
+                : (st.tone === 'upcoming'
+                    ? 'bg-emerald-50 text-[#00A878] border-emerald-200'
+                    : 'bg-slate-100 text-slate-500 border-slate-200');
+            return (
+                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border shrink-0 ${cls}`}>
+                    {st.label}
+                </span>
+            );
+        };
 
         return (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1659,17 +1160,18 @@
                                         <div
                                             key={t.id}
                                             onClick={() => onSelectTrip(t.id)}
-                                            className={`p-3.5 rounded-2xl border cursor-pointer flex items-center justify-between ${
+                                            className={`p-3.5 rounded-2xl border cursor-pointer flex items-center justify-between gap-2 ${
                                                 currentTrip && currentTrip.id === t.id ? 'bg-indigo-50 border-indigo-500' : 'bg-white border-slate-200 hover:bg-slate-50'
                                             }`}
                                         >
-                                            <div>
-                                                <div className="text-xs text-indigo-700 font-bold">
-                                                    {t.destination} ({U.formatDateDot(t.startDate, true)} ~ {U.formatDateDot(t.endDate, true)})
+                                            <div className="min-w-0">
+                                                <div className="text-xs text-indigo-700 font-bold flex items-center gap-1.5 flex-wrap">
+                                                    {renderBadge(t)}
+                                                    <span>{t.destination} ({U.formatDateDot(t.startDate, true)} ~ {U.formatDateDot(t.endDate, true)})</span>
                                                 </div>
-                                                <div className="text-sm font-extrabold text-slate-800">{t.title}</div>
+                                                <div className="text-sm font-extrabold text-slate-800 mt-0.5 truncate">{t.title}</div>
                                             </div>
-                                            <button onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1">삭제</button>
+                                            <button onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1 shrink-0">삭제</button>
                                         </div>
                                     ))}
                                 </div>
@@ -1694,17 +1196,18 @@
                                         <div
                                             key={t.id}
                                             onClick={() => onSelectTrip(t.id)}
-                                            className={`p-3.5 rounded-2xl border cursor-pointer flex items-center justify-between ${
+                                            className={`p-3.5 rounded-2xl border cursor-pointer flex items-center justify-between gap-2 ${
                                                 currentTrip && currentTrip.id === t.id ? 'bg-emerald-50 border-[#00C48C]' : 'bg-white border-slate-200 hover:bg-slate-50'
                                             }`}
                                         >
-                                            <div>
-                                                <div className="text-xs text-[#00A878] font-bold">
-                                                    {t.destination} · {t.shareCode} ({U.formatDateDot(t.startDate, true)} ~ {U.formatDateDot(t.endDate, true)})
+                                            <div className="min-w-0">
+                                                <div className="text-xs text-[#00A878] font-bold flex items-center gap-1.5 flex-wrap">
+                                                    {renderBadge(t)}
+                                                    <span>{t.destination} · {t.shareCode} ({U.formatDateDot(t.startDate, true)} ~ {U.formatDateDot(t.endDate, true)})</span>
                                                 </div>
-                                                <div className="text-sm font-extrabold text-slate-800">{t.title}</div>
+                                                <div className="text-sm font-extrabold text-slate-800 mt-0.5 truncate">{t.title}</div>
                                             </div>
-                                            <button onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1">
+                                            <button onClick={(e) => onDeleteTrip(t, e)} className="text-xs text-rose-500 font-bold px-2.5 py-1 shrink-0">
                                                 {(isAdmin || U.sanitizeKey(t.ownerKey) === activeUserKey) ? '삭제' : '나가기'}
                                             </button>
                                         </div>
@@ -1728,33 +1231,853 @@
     // ========================================================================
     // 16. 초대 코드 입력 모달 (TRIP- 스마트 고정)
     // ========================================================================
-    function JoinCodeModal({ isOpen, digits, setDigits, onClose, onSubmit }) {
-        if (!isOpen) return null;
+    // 17. [v0.2.2 신규] 항공편(편도/왕복) · 숙소(전체/일부) 자동 일정 등록 모달
+    // ========================================================================
+    function FlightHotelModal({
+        isOpen,
+        currentTrip,
+        tripDays,
+        companions,
+        onClose,
+        onSaveFlight,
+        onSaveHotel
+    }) {
+        const [tab, setTab] = useState('flight');
+        const [errorMsg, setErrorMsg] = useState('');
+
+        // 항공편 폼 상태
+        const [flight, setFlight] = useState({
+            tripType: 'round',
+            outDay: 1,
+            outTime: '',
+            outEndTime: '',
+            outTitle: '',
+            outMemo: '',
+            inDay: 1,
+            inTime: '',
+            inEndTime: '',
+            inTitle: '',
+            inMemo: '',
+            linkUrl: '',
+            cost: '',
+            currency: 'KRW',
+            addToBudget: true,
+            payerId: 'c1'
+        });
+
+        // 숙소 폼 상태
+        const [hotel, setHotel] = useState({
+            name: '',
+            address: '',
+            checkInDay: 1,
+            checkOutDay: 1,
+            checkInTime: '15:00',
+            checkOutTime: '11:00',
+            includeMiddleNights: false,
+            memo: '',
+            linkUrl: '',
+            cost: '',
+            currency: 'KRW',
+            addToBudget: true,
+            budgetDay: 0,
+            payerId: 'c1'
+        });
+
+        const [isSearchingHotel, setIsSearchingHotel] = useState(false);
+        const [hotelSearchResults, setHotelSearchResults] = useState([]);
+
+        useEffect(() => {
+            if (isOpen && currentTrip) {
+                const lastDay = (tripDays && tripDays.length > 0) ? tripDays[tripDays.length - 1] : 1;
+                const defaultPayer = (companions && companions[0] && companions[0].id) || 'c1';
+                setErrorMsg('');
+                setHotelSearchResults([]);
+                setFlight({
+                    tripType: lastDay > 1 ? 'round' : 'oneway',
+                    outDay: 1,
+                    outTime: '',
+                    outEndTime: '',
+                    outTitle: '',
+                    outMemo: '',
+                    inDay: lastDay,
+                    inTime: '',
+                    inEndTime: '',
+                    inTitle: '',
+                    inMemo: '',
+                    linkUrl: '',
+                    cost: '',
+                    currency: 'KRW',
+                    addToBudget: true,
+                    payerId: defaultPayer
+                });
+                setHotel({
+                    name: '',
+                    address: '',
+                    checkInDay: 1,
+                    checkOutDay: lastDay,
+                    checkInTime: '15:00',
+                    checkOutTime: '11:00',
+                    includeMiddleNights: false,
+                    memo: '',
+                    linkUrl: '',
+                    cost: '',
+                    currency: currentTrip.currency || 'KRW',
+                    addToBudget: true,
+                    budgetDay: 0,
+                    payerId: defaultPayer
+                });
+            }
+        }, [isOpen, currentTrip]);
+
+        if (!isOpen || !currentTrip) return null;
+        const U = getU();
+        const P = getP();
+        const CURRENCIES = P.currencies || {};
+
+        const handleHotelAddrSearch = async () => {
+            const q = (hotel.name || hotel.address || '').trim();
+            if (!q) {
+                setErrorMsg('숙소 이름을 먼저 입력해주세요.');
+                return;
+            }
+            setErrorMsg('');
+            setIsSearchingHotel(true);
+            setHotelSearchResults([]);
+            try {
+                const destHint = currentTrip.country === '직접 입력' ? '' : (currentTrip.city || currentTrip.country || '');
+                const data = await U.searchAddressNominatim(q, destHint);
+                if (data.length > 0) {
+                    setHotelSearchResults(data);
+                    const firstClean = U.formatKoreanAddress(data[0].display_name, hotel.name);
+                    setHotel(prev => ({ ...prev, address: prev.address || firstClean }));
+                } else {
+                    setErrorMsg('검색 결과가 없습니다. 주소를 직접 입력하실 수 있습니다.');
+                }
+            } catch (e) {
+                setErrorMsg('주소 검색 서버 연결에 실패했습니다.');
+            } finally {
+                setIsSearchingHotel(false);
+            }
+        };
+
+        const submitFlight = (e) => {
+            e.preventDefault();
+            setErrorMsg('');
+            if (!flight.outTitle.trim()) {
+                setErrorMsg('가는 편 항공편/구간명을 입력해주세요.');
+                return;
+            }
+            if (flight.tripType === 'round') {
+                if (!flight.inTitle.trim()) {
+                    setErrorMsg('오는 편 항공편/구간명을 입력해주세요.');
+                    return;
+                }
+                if (Number(flight.inDay) < Number(flight.outDay)) {
+                    setErrorMsg('오는 편 일차가 가는 편 일차보다 빠를 수 없습니다.');
+                    return;
+                }
+            }
+            onSaveFlight(flight);
+            onClose();
+        };
+
+        const submitHotel = (e) => {
+            e.preventDefault();
+            setErrorMsg('');
+            if (!hotel.name.trim()) {
+                setErrorMsg('숙소 이름을 입력해주세요.');
+                return;
+            }
+            if (Number(hotel.checkOutDay) < Number(hotel.checkInDay)) {
+                setErrorMsg('체크아웃 일차가 체크인 일차보다 빠를 수 없습니다.');
+                return;
+            }
+            onSaveHotel(hotel);
+            onClose();
+        };
+
+        const middleNightsCount = Math.max(0, Number(hotel.checkOutDay) - Number(hotel.checkInDay) - 1);
+
+        return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                    <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-extrabold text-slate-800">✈️ 항공편 · 🏨 숙소 자동 일정 등록</h3>
+                        <button onClick={onClose} className="text-slate-400">✕</button>
+                    </div>
+
+                    {/* 항공 / 숙소 모드 전환 탭 */}
+                    <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-2xl">
+                        <button
+                            type="button"
+                            onClick={() => { setTab('flight'); setErrorMsg(''); }}
+                            className={`py-2 rounded-xl text-xs font-extrabold transition ${
+                                tab === 'flight' ? 'bg-white text-[#00A878] shadow-2xs' : 'text-slate-500'
+                            }`}
+                        >
+                            ✈️ 항공편 (편도/왕복)
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => { setTab('hotel'); setErrorMsg(''); }}
+                            className={`py-2 rounded-xl text-xs font-extrabold transition ${
+                                tab === 'hotel' ? 'bg-white text-[#00A878] shadow-2xs' : 'text-slate-500'
+                            }`}
+                        >
+                            🏨 숙소 (전체/일부)
+                        </button>
+                    </div>
+
+                    {errorMsg && (
+                        <div className="bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold px-3.5 py-2.5 rounded-xl">
+                            ⚠️ {errorMsg}
+                        </div>
+                    )}
+
+                    {/* ==================== 항공편 폼 ==================== */}
+                    {tab === 'flight' && (
+                        <form onSubmit={submitFlight} className="space-y-3.5">
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setFlight({ ...flight, tripType: 'round' })}
+                                    className={`py-2 rounded-xl text-xs font-extrabold border ${
+                                        flight.tripType === 'round' ? 'bg-emerald-50 border-[#00C48C] text-[#00A878]' : 'bg-slate-50 border-slate-200 text-slate-500'
+                                    }`}
+                                >
+                                    🔁 왕복 (가는편 + 오는편)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setFlight({ ...flight, tripType: 'oneway' })}
+                                    className={`py-2 rounded-xl text-xs font-extrabold border ${
+                                        flight.tripType === 'oneway' ? 'bg-emerald-50 border-[#00C48C] text-[#00A878]' : 'bg-slate-50 border-slate-200 text-slate-500'
+                                    }`}
+                                >
+                                    ➡️ 편도 (1구간만)
+                                </button>
+                            </div>
+
+                            {/* 가는 편 박스 */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
+                                <div className="text-xs font-extrabold text-sky-700">🛫 가는 편</div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-500 mb-1">일차</label>
+                                        <select
+                                            value={flight.outDay}
+                                            onChange={(e) => setFlight({ ...flight, outDay: Number(e.target.value) })}
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                        >
+                                            {tripDays.map(d => (
+                                                <option key={d} value={d}>{d}일차 ({U.getDayDateDot(currentTrip.startDate, d, false)})</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-500 mb-1">출발 시각</label>
+                                        <input
+                                            type="time"
+                                            value={flight.outTime}
+                                            onChange={(e) => setFlight({ ...flight, outTime: e.target.value })}
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-500 mb-1">도착 시각</label>
+                                        <input
+                                            type="time"
+                                            value={flight.outEndTime}
+                                            onChange={(e) => setFlight({ ...flight, outEndTime: e.target.value })}
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                        />
+                                    </div>
+                                </div>
+                                <input
+                                    type="text"
+                                    placeholder="항공편/구간명 (예: 인천 ➔ 나리타 · 대한항공 KE703)"
+                                    value={flight.outTitle}
+                                    onChange={(e) => setFlight({ ...flight, outTitle: e.target.value })}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                    required
+                                />
+                                <input
+                                    type="text"
+                                    placeholder="메모 (터미널, 예약번호, 수하물 등 · 선택)"
+                                    value={flight.outMemo}
+                                    onChange={(e) => setFlight({ ...flight, outMemo: e.target.value })}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs"
+                                />
+                            </div>
+
+                            {/* 오는 편 박스 (왕복일 때) */}
+                            {flight.tripType === 'round' && (
+                                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
+                                    <div className="text-xs font-extrabold text-indigo-700">🛬 오는 편</div>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <label className="block text-[11px] font-bold text-slate-500 mb-1">일차</label>
+                                            <select
+                                                value={flight.inDay}
+                                                onChange={(e) => setFlight({ ...flight, inDay: Number(e.target.value) })}
+                                                className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                            >
+                                                {tripDays.map(d => (
+                                                    <option key={d} value={d}>{d}일차 ({U.getDayDateDot(currentTrip.startDate, d, false)})</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-bold text-slate-500 mb-1">출발 시각</label>
+                                            <input
+                                                type="time"
+                                                value={flight.inTime}
+                                                onChange={(e) => setFlight({ ...flight, inTime: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-bold text-slate-500 mb-1">도착 시각</label>
+                                            <input
+                                                type="time"
+                                                value={flight.inEndTime}
+                                                onChange={(e) => setFlight({ ...flight, inEndTime: e.target.value })}
+                                                className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                            />
+                                        </div>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="항공편/구간명 (예: 나리타 ➔ 인천 · 대한항공 KE704)"
+                                        value={flight.inTitle}
+                                        onChange={(e) => setFlight({ ...flight, inTitle: e.target.value })}
+                                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                        required
+                                    />
+                                    <input
+                                        type="text"
+                                        placeholder="메모 (터미널, 예약번호 등 · 선택)"
+                                        value={flight.inMemo}
+                                        onChange={(e) => setFlight({ ...flight, inMemo: e.target.value })}
+                                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs"
+                                    />
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">🔗 E-티켓 / 예약 링크 (선택)</label>
+                                <input
+                                    type="text"
+                                    placeholder="https://..."
+                                    value={flight.linkUrl}
+                                    onChange={(e) => setFlight({ ...flight, linkUrl: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                                />
+                            </div>
+
+                            {/* 항공권 비용 및 가계부 동시 등록 */}
+                            <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 space-y-2.5">
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div className="col-span-2">
+                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">항공권 총 비용 (선택)</label>
+                                        <input
+                                            type="number"
+                                            placeholder="입력 시 가계부 자동 연동 가능"
+                                            value={flight.cost}
+                                            onChange={(e) => setFlight({ ...flight, cost: e.target.value })}
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">통화</label>
+                                        <select
+                                            value={flight.currency}
+                                            onChange={(e) => setFlight({ ...flight, currency: e.target.value })}
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                        >
+                                            {Object.keys(CURRENCIES).map(code => <option key={code} value={code}>{code}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                {Number(flight.cost) > 0 && (
+                                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                                        <label className="flex items-center gap-2 text-xs font-extrabold text-teal-900 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={flight.addToBudget}
+                                                onChange={(e) => setFlight({ ...flight, addToBudget: e.target.checked })}
+                                                className="w-4 h-4 accent-[#00C48C]"
+                                            />
+                                            <span>가계부(사전 지출)에도 함께 등록</span>
+                                        </label>
+                                        {flight.addToBudget && (
+                                            <select
+                                                value={flight.payerId}
+                                                onChange={(e) => setFlight({ ...flight, payerId: e.target.value })}
+                                                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[11px] font-bold"
+                                            >
+                                                {companions.map(c => <option key={c.id} value={c.id}>결제: {c.avatar} {c.name}</option>)}
+                                            </select>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex gap-2 pt-1">
+                                <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">
+                                    ✈️ 일정에 자동 배치하기
+                                </button>
+                            </div>
+                        </form>
+                    )}
+
+                    {/* ==================== 숙소 폼 ==================== */}
+                    {tab === 'hotel' && (
+                        <form onSubmit={submitHotel} className="space-y-3.5">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">숙소명</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="예: 신주쿠 그레이서리 호텔"
+                                        value={hotel.name}
+                                        onChange={(e) => setHotel({ ...hotel, name: e.target.value })}
+                                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm font-bold"
+                                        required
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleHotelAddrSearch}
+                                        className="bg-emerald-50 text-[#00A878] border border-emerald-200 px-3 py-2 rounded-xl text-xs font-extrabold shrink-0"
+                                    >
+                                        {isSearchingHotel ? '검색중..' : '🔍 주소 검색'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {hotelSearchResults.length > 0 && (
+                                <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 space-y-1 max-h-32 overflow-y-auto">
+                                    {hotelSearchResults.map((r, i) => {
+                                        const cleanAddr = U.formatKoreanAddress(r.display_name, hotel.name);
+                                        return (
+                                            <button
+                                                type="button"
+                                                key={i}
+                                                onClick={() => {
+                                                    setHotel({ ...hotel, address: cleanAddr });
+                                                    setHotelSearchResults([]);
+                                                }}
+                                                className="w-full text-left text-[11px] p-1.5 rounded-lg hover:bg-emerald-50 text-slate-700 font-medium"
+                                            >
+                                                📍 {cleanAddr}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-600 mb-1">숙소 주소 (선택)</label>
+                                <input
+                                    type="text"
+                                    value={hotel.address}
+                                    onChange={(e) => setHotel({ ...hotel, address: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2.5 bg-slate-50 border border-slate-200 rounded-2xl p-3.5">
+                                <div className="space-y-1.5">
+                                    <label className="block text-[11px] font-extrabold text-purple-700">🔑 체크인 일차</label>
+                                    <select
+                                        value={hotel.checkInDay}
+                                        onChange={(e) => setHotel({ ...hotel, checkInDay: Number(e.target.value) })}
+                                        className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-bold"
+                                    >
+                                        {tripDays.map(d => (
+                                            <option key={d} value={d}>{d}일차 ({U.getDayDateDot(currentTrip.startDate, d, false)})</option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        type="time"
+                                        value={hotel.checkInTime}
+                                        onChange={(e) => setHotel({ ...hotel, checkInTime: e.target.value })}
+                                        className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold"
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <label className="block text-[11px] font-extrabold text-purple-700">🧳 체크아웃 일차</label>
+                                    <select
+                                        value={hotel.checkOutDay}
+                                        onChange={(e) => setHotel({ ...hotel, checkOutDay: Number(e.target.value) })}
+                                        className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-bold"
+                                    >
+                                        {tripDays.map(d => (
+                                            <option key={d} value={d}>{d}일차 ({U.getDayDateDot(currentTrip.startDate, d, false)})</option>
+                                        ))}
+                                    </select>
+                                    <input
+                                        type="time"
+                                        value={hotel.checkOutTime}
+                                        onChange={(e) => setHotel({ ...hotel, checkOutTime: e.target.value })}
+                                        className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold"
+                                    />
+                                </div>
+                                {middleNightsCount > 0 && (
+                                    <div className="col-span-2 pt-1.5 border-t border-slate-200">
+                                        <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={hotel.includeMiddleNights}
+                                                onChange={(e) => setHotel({ ...hotel, includeMiddleNights: e.target.checked })}
+                                                className="w-4 h-4 accent-[#00C48C]"
+                                            />
+                                            <span>중간 연박 {middleNightsCount}일에도 [연박] 일정 자동 넣기</span>
+                                        </label>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">🔗 예약 바우처 링크 (선택)</label>
+                                    <input
+                                        type="text"
+                                        placeholder="https://..."
+                                        value={hotel.linkUrl}
+                                        onChange={(e) => setHotel({ ...hotel, linkUrl: e.target.value })}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">예약번호 / 메모</label>
+                                    <input
+                                        type="text"
+                                        placeholder="조식 포함, 얼리체크인 등"
+                                        value={hotel.memo}
+                                        onChange={(e) => setHotel({ ...hotel, memo: e.target.value })}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* 숙박 비용 및 가계부 동시 등록 */}
+                            <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 space-y-2.5">
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div className="col-span-2">
+                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">숙박 총 비용 (선택)</label>
+                                        <input
+                                            type="number"
+                                            placeholder="입력 시 가계부 자동 연동 가능"
+                                            value={hotel.cost}
+                                            onChange={(e) => setHotel({ ...hotel, cost: e.target.value })}
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] font-bold text-slate-600 mb-1">통화</label>
+                                        <select
+                                            value={hotel.currency}
+                                            onChange={(e) => setHotel({ ...hotel, currency: e.target.value })}
+                                            className="w-full bg-white border border-slate-200 rounded-xl px-2 py-2 text-xs font-bold"
+                                        >
+                                            {Object.keys(CURRENCIES).map(code => <option key={code} value={code}>{code}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                {Number(hotel.cost) > 0 && (
+                                    <div className="space-y-2 pt-1">
+                                        <label className="flex items-center gap-2 text-xs font-extrabold text-teal-900 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={hotel.addToBudget}
+                                                onChange={(e) => setHotel({ ...hotel, addToBudget: e.target.checked })}
+                                                className="w-4 h-4 accent-[#00C48C]"
+                                            />
+                                            <span>가계부에도 숙박비 함께 등록</span>
+                                        </label>
+                                        {hotel.addToBudget && (
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <select
+                                                    value={hotel.budgetDay}
+                                                    onChange={(e) => setHotel({ ...hotel, budgetDay: Number(e.target.value) })}
+                                                    className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-bold"
+                                                >
+                                                    <option value={0}>✈️ 사전 지출로 기록</option>
+                                                    <option value={hotel.checkInDay}>{hotel.checkInDay}일차(체크인 날)로 기록</option>
+                                                </select>
+                                                <select
+                                                    value={hotel.payerId}
+                                                    onChange={(e) => setHotel({ ...hotel, payerId: e.target.value })}
+                                                    className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] font-bold"
+                                                >
+                                                    {companions.map(c => <option key={c.id} value={c.id}>결제: {c.avatar} {c.name}</option>)}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="flex gap-2 pt-1">
+                                <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">취소</button>
+                                <button type="submit" className="flex-1 py-2.5 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">
+                                    🏨 숙소 일정 자동 배치하기
+                                </button>
+                            </div>
+                        </form>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 18. [v0.2.2 신규] 영수증 지연 로딩 뷰어 모달
+    // ========================================================================
+    function ReceiptViewerModal({ viewerState, onClose }) {
+        const [loading, setLoading] = useState(false);
+        const [receiptData, setReceiptData] = useState(null);
+        const [errMsg, setErrMsg] = useState('');
+
+        useEffect(() => {
+            let cancelled = false;
+            if (!viewerState || !viewerState.isOpen) {
+                setReceiptData(null);
+                setErrMsg('');
+                return;
+            }
+            if (!viewerState.hasReceipt) {
+                setReceiptData(null);
+                setLoading(false);
+                return;
+            }
+
+            const API = getAPI();
+            if (!API.getReceipt) return;
+            setLoading(true);
+            setErrMsg('');
+            API.getReceipt(viewerState.tripId, viewerState.expenseId)
+                .then((data) => {
+                    if (cancelled) return;
+                    if (data && data.dataUrl) setReceiptData(data);
+                    else setErrMsg('저장된 영수증 이미지를 찾을 수 없습니다.');
+                })
+                .catch(() => {
+                    if (!cancelled) setErrMsg('영수증을 불러오는 중 오류가 발생했습니다.');
+                })
+                .finally(() => {
+                    if (!cancelled) setLoading(false);
+                });
+
+            return () => { cancelled = true; };
+        }, [viewerState]);
+
+        if (!viewerState || !viewerState.isOpen) return null;
+        const U = getU();
+        const safeExtUrl = U.normalizeExternalUrl ? U.normalizeExternalUrl(viewerState.receiptUrl) : '';
+
+        return (
+            <div className="fixed inset-0 z-[95] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4" onClick={onClose}>
+                <div
+                    className="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl space-y-3.5 max-h-[90vh] overflow-y-auto"
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    <div className="flex justify-between items-start gap-2">
+                        <div className="min-w-0">
+                            <h4 className="text-base font-extrabold text-slate-900 truncate">🧾 {viewerState.title || '영수증 보기'}</h4>
+                            {viewerState.amountText && (
+                                <div className="text-xs font-bold text-[#00A878] mt-0.5">{viewerState.amountText}</div>
+                            )}
+                        </div>
+                        <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-sm font-bold shrink-0">✕</button>
+                    </div>
+
+                    {viewerState.hasReceipt && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-2 flex items-center justify-center min-h-[180px]">
+                            {loading ? (
+                                <div className="text-xs font-bold text-slate-400 animate-pulse py-10">영수증 불러오는 중...</div>
+                            ) : errMsg ? (
+                                <div className="text-xs font-bold text-rose-500 py-8 text-center">{errMsg}</div>
+                            ) : receiptData && receiptData.dataUrl ? (
+                                <div className="space-y-2 w-full">
+                                    <img
+                                        src={receiptData.dataUrl}
+                                        alt="첨부 영수증"
+                                        className="w-full max-h-[60vh] object-contain rounded-xl bg-white"
+                                    />
+                                    <div className="text-[10px] text-slate-400 text-center">
+                                        용량 {receiptData.sizeKB || '?'}KB
+                                        {receiptData.uploadedBy ? ` · 등록 ${receiptData.uploadedBy}` : ''}
+                                    </div>
+                                </div>
+                            ) : null}
+                        </div>
+                    )}
+
+                    {safeExtUrl && (
+                        <a
+                            href={safeExtUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="w-full py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-[#00A878] border border-emerald-200 text-xs font-extrabold flex items-center justify-center gap-1.5"
+                        >
+                            🔗 연결된 외부 영수증 링크 열기 ↗
+                        </a>
+                    )}
+
+                    <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-extrabold">
+                        닫기
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // ========================================================================
+    // 19. [v0.2.2 신규] 빠른 환율 계산기 모달
+    // ========================================================================
+    function QuickCalcModal({ isOpen, currentTrip, selectedDay, onClose, onApplyToExpense }) {
+        const [currency, setCurrency] = useState('JPY');
+        const [foreignVal, setForeignVal] = useState('');
+        const [krwVal, setKrwVal] = useState('');
+
+        useEffect(() => {
+            if (isOpen && currentTrip) {
+                const defaultCurr = (currentTrip.currency && currentTrip.currency !== 'KRW') ? currentTrip.currency : 'JPY';
+                setCurrency(defaultCurr);
+                setForeignVal('');
+                setKrwVal('');
+            }
+        }, [isOpen, currentTrip]);
+
+        if (!isOpen || !currentTrip) return null;
+        const P = getP();
+        const B = getB();
+        const CURRENCIES = P.currencies || {};
+        const nonKrwCodes = Object.keys(CURRENCIES).filter(c => c !== 'KRW');
+        const unit = (CURRENCIES[currency] && CURRENCIES[currency].unit) || 1;
+        const effectiveRate = B.getEffectiveRate ? B.getEffectiveRate(currentTrip, currency, selectedDay) : 1;
+
+        const handleForeignChange = (raw) => {
+            setForeignVal(raw);
+            const num = Number(raw);
+            if (!raw || isNaN(num)) {
+                setKrwVal('');
+                return;
+            }
+            const computedKrw = Math.round((num * effectiveRate) / unit);
+            setKrwVal(String(computedKrw));
+        };
+
+        const handleKrwChange = (raw) => {
+            setKrwVal(raw);
+            const num = Number(raw);
+            if (!raw || isNaN(num) || !effectiveRate) {
+                setForeignVal('');
+                return;
+            }
+            const computedForeign = Number(((num * unit) / effectiveRate).toFixed(unit >= 100 ? 0 : 2));
+            setForeignVal(String(computedForeign));
+        };
+
+        const handleCurrencyChange = (nextCode) => {
+            setCurrency(nextCode);
+            const nextUnit = (CURRENCIES[nextCode] && CURRENCIES[nextCode].unit) || 1;
+            const nextRate = B.getEffectiveRate ? B.getEffectiveRate(currentTrip, nextCode, selectedDay) : 1;
+            const fNum = Number(foreignVal);
+            if (foreignVal && !isNaN(fNum)) {
+                setKrwVal(String(Math.round((fNum * nextRate) / nextUnit)));
+            }
+        };
+
+        const quickIncrements = unit >= 100 ? [1000, 5000, 10000] : [10, 50, 100];
 
         return (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
                 <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4">
                     <div className="flex justify-between items-center">
-                        <h3 className="text-lg font-extrabold text-slate-800">🔑 공유 여행 코드 입력</h3>
+                        <h3 className="text-base font-extrabold text-slate-800">🧮 빠른 환율 계산기</h3>
                         <button onClick={onClose} className="text-slate-400">✕</button>
                     </div>
-                    <form onSubmit={onSubmit} className="space-y-3">
-                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-                            <span className="text-base font-mono font-extrabold text-slate-400 select-none">TRIP-</span>
+
+                    <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-2.5">
+                        <select
+                            value={currency}
+                            onChange={(e) => handleCurrencyChange(e.target.value)}
+                            className="bg-transparent text-xs font-extrabold text-slate-800 focus:outline-none"
+                        >
+                            {nonKrwCodes.map(code => (
+                                <option key={code} value={code}>{CURRENCIES[code].name}</option>
+                            ))}
+                        </select>
+                        <span className="text-[11px] font-bold text-[#00A878] shrink-0">
+                            {unit} {currency} = {effectiveRate}원
+                        </span>
+                    </div>
+
+                    <div className="space-y-3">
+                        <div>
+                            <label className="block text-[11px] font-bold text-slate-500 mb-1">현지 금액 ({currency})</label>
                             <input
-                                type="text"
-                                placeholder="0000"
-                                value={digits}
-                                onChange={(e) => {
-                                    const cleaned = e.target.value.toUpperCase().replace(/^TRIP-?/i, '').replace(/[^0-9A-Z]/g, '').slice(0, 4);
-                                    setDigits(cleaned);
-                                }}
-                                className="w-full bg-transparent text-base font-mono font-extrabold tracking-widest text-slate-800 focus:outline-none ml-1"
-                                required
+                                type="number"
+                                step="any"
+                                placeholder={`금액 입력 (${CURRENCIES[currency]?.symbol || currency})`}
+                                value={foreignVal}
+                                onChange={(e) => handleForeignChange(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-lg font-extrabold text-right text-slate-900"
+                                autoFocus
+                            />
+                            <div className="flex items-center gap-1.5 mt-2">
+                                {quickIncrements.map(inc => (
+                                    <button
+                                        key={inc}
+                                        type="button"
+                                        onClick={() => handleForeignChange(String((Number(foreignVal) || 0) + inc))}
+                                        className="flex-1 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-700"
+                                    >
+                                        +{inc.toLocaleString()}
+                                    </button>
+                                ))}
+                                <button
+                                    type="button"
+                                    onClick={() => { setForeignVal(''); setKrwVal(''); }}
+                                    className="px-2.5 py-1.5 rounded-lg bg-rose-50 text-[11px] font-bold text-rose-500"
+                                >
+                                    C
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="text-center text-xs font-black text-slate-400">⇅</div>
+
+                        <div>
+                            <label className="block text-[11px] font-bold text-slate-500 mb-1">대한민국 원 (KRW)</label>
+                            <input
+                                type="number"
+                                placeholder="원화 환산 금액"
+                                value={krwVal}
+                                onChange={(e) => handleKrwChange(e.target.value)}
+                                className="w-full bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-lg font-extrabold text-right text-[#00A878]"
                             />
                         </div>
-                        <button type="submit" className="w-full py-3 rounded-xl bg-[#00C48C] text-white text-xs font-extrabold">여행 연동하기</button>
-                    </form>
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                        <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-600 text-xs font-bold">닫기</button>
+                        <button
+                            type="button"
+                            disabled={!foreignVal || Number(foreignVal) <= 0}
+                            onClick={() => {
+                                onApplyToExpense({ amount: foreignVal, currency });
+                                onClose();
+                            }}
+                            className="flex-1 py-2.5 rounded-xl bg-[#00C48C] disabled:opacity-40 text-white text-xs font-extrabold"
+                        >
+                            💰 이 금액으로 지출 기록
+                        </button>
+                    </div>
                 </div>
             </div>
         );
@@ -1778,6 +2101,9 @@
         SettlementModal,
         ShareModal,
         TripListModal,
-        JoinCodeModal
+        JoinCodeModal,
+        FlightHotelModal,
+        ReceiptViewerModal,
+        QuickCalcModal
     };
 })(window);
