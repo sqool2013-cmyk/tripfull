@@ -26,6 +26,13 @@
             '🗼', '🗽', '🏰', '🎡', '⛩️', '🌅',
             '🍜', '🍣', '☕', '🍻', '🛍️', '🌟'
         ],
+        categoryMeta: {
+            sightseeing: { label: '관광', emoji: '🎡', color: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+            food: { label: '식당/카페', emoji: '🍽️', color: 'text-orange-700 bg-orange-50 border-orange-200' },
+            shopping: { label: '쇼핑', emoji: '🛍️', color: 'text-pink-700 bg-pink-50 border-pink-200' },
+            transport: { label: '교통/항공', emoji: '✈️', color: 'text-sky-700 bg-sky-50 border-sky-200' },
+            hotel: { label: '숙소', emoji: '🏨', color: 'text-purple-700 bg-purple-50 border-purple-200' },
+            etc: { label: '기타', emoji: '📌', color: 'text-slate-700 bg-slate-100 border-slate-200' }
         },
         currencies: {
             KRW: { symbol: '₩', name: '대한민국 원 (KRW)', unit: 1, defaultRate: 1 },
@@ -64,7 +71,7 @@
 
     /**
      * presets.json 데이터를 로드하고 메모리에 등록합니다.
-     * @param {string} url - presets.json 경로 (기본 './presets.json')
+     * @param {string} url - presets.json 경로 (기본 './presets.json?v=0.2.2')
      * @returns {Promise<object>} 로드된 프리셋 객체
      */
     async function loadPresets(url) {
@@ -102,18 +109,11 @@
     // 1. 키 정제 및 비밀번호 해시 유틸리티
     // ========================================================================
 
-    /**
-     * Firebase Realtime Database 노드 키에 금지된 문자(., #, $, /, [, ], 공백)를 치환합니다.
-     */
     function sanitizeKey(str) {
         if (!str) return '';
         return String(str).trim().toLowerCase().replace(/[.#$/[\]\s]/g, '_');
     }
 
-    /**
-     * 비밀번호를 SHA-256 단방향 해시 문자열('sha256:...')로 변환합니다.
-     * Web Crypto API 미지원 환경(비보안 HTTP 등)에서는 FNV-1a 폴백 해시를 사용합니다.
-     */
     async function hashSecret(plainText) {
         const str = String(plainText || '').trim();
         if (global.crypto && global.crypto.subtle) {
@@ -136,18 +136,11 @@
         return 'fnv1a:' + (h >>> 0).toString(16);
     }
 
-    /**
-     * 무유출(Zero-download) RTDB 경로(/tripfull/secrets/{userKey}/{secretKey})에
-     * 안전하게 사용할 수 있도록 콜론(:) 등을 언더스코어(_)로 치환한 키를 반환합니다.
-     */
     function toSafeSecretKey(hashStr) {
         if (!hashStr) return '';
         return String(hashStr).replace(/[^a-zA-Z0-9_-]/g, '_');
     }
 
-    /**
-     * 구버전 프로필(pin 또는 pinHash 보유) 검증용 헬퍼 (무유출 구조 자동 이관 시 사용)
-     */
     async function verifyLegacySecret(inputPlain, profileObj) {
         if (!profileObj) return false;
         const cleanInput = String(inputPlain || '').trim();
@@ -162,13 +155,9 @@
     }
 
     // ========================================================================
-    // 2. 날짜, 시차 및 여행 일차 계산 유틸리티
+    // 2. 날짜, D-Day, 시차 및 여행 일차 계산 유틸리티
     // ========================================================================
 
-    /**
-     * 로컬 타임존 기준 오늘 날짜를 'YYYY-MM-DD' 형식으로 반환합니다.
-     * (toISOString()의 UTC 시차로 인해 자정~오전 9시 사이에 어제 날짜가 나오는 버그 방지)
-     */
     function getTodayIso() {
         const now = new Date();
         const y = now.getFullYear();
@@ -177,9 +166,6 @@
         return y + '-' + m + '-' + d;
     }
 
-    /**
-     * 'YYYY-MM-DD' 문자열을 'yyyy. m. d.(요일)' 또는 'm. d.(요일)' 형식으로 변환합니다.
-     */
     function formatDateDot(dateStr, includeYear) {
         if (includeYear === undefined) includeYear = true;
         if (!dateStr) return '날짜 선택';
@@ -197,9 +183,6 @@
             : m + '. ' + d + '.(' + dayName + ')';
     }
 
-    /**
-     * 출발일 기준 N일차의 날짜를 'm. d.(요일)' 형식으로 반환합니다.
-     */
     function getDayDateDot(startDateStr, dayNum, includeYear) {
         if (includeYear === undefined) includeYear = false;
         if (!startDateStr) return '';
@@ -217,10 +200,6 @@
             : m + '. ' + d + '.(' + dayName + ')';
     }
 
-    /**
-     * 여행 기간(startDate ~ endDate) 및 기존 등록 일정 일차를 종합해
-     * [1, 2, 3, ...] 형태의 일차 배열을 생성합니다.
-     */
     function getTripDayNumbers(tripObj) {
         if (!tripObj) return [1];
         let diffDays = 1;
@@ -245,10 +224,6 @@
         return arr;
     }
 
-    /**
-     * 여행 출발일·도착일과 오늘 날짜(로컬 기준)를 비교해 D-Day / 진행 상태 배지를 반환합니다.
-     * @returns {{ label: string, tone: 'upcoming'|'active'|'done' } | null}
-     */
     function getTripStatusBadge(tripObj) {
         if (!tripObj || !tripObj.startDate) return null;
         const sParts = String(tripObj.startDate).split('-').map(Number);
@@ -280,9 +255,6 @@
         return { label: '여행 ' + dayIdx + '일차', tone: 'active' };
     }
 
-    /**
-     * 여행 객체에서 국가 메타데이터(통화, 시차, 전압, 긴급연락처)를 추론합니다.
-     */
     function detectCountryMeta(tripObj) {
         const presets = activePresets.countryPresets || FALLBACK_PRESETS.countryPresets;
         if (!tripObj) return presets['대한민국'] || presets['직접 입력'];
@@ -303,9 +275,6 @@
         return presets['직접 입력'];
     }
 
-    /**
-     * 현재 한국 시각(KST) 및 여행지 현지 시각·가이드 정보를 계산합니다.
-     */
     function getLocalTimeInfo(tripObj, nowTick) {
         if (!tripObj) return null;
         const meta = detectCountryMeta(tripObj);
@@ -347,9 +316,6 @@
         };
     }
 
-    /**
-     * JPY/VND 구버전 1단위 환율(예: 9.05)이 입력되어 있을 경우 통상 100단위(예: 905)로 보정합니다.
-     */
     function normalizeRateValue(currency, val) {
         const currencies = activePresets.currencies || FALLBACK_PRESETS.currencies;
         const num = Number(val);
@@ -364,10 +330,6 @@
     // 3. 한국식 주소 정제 (2026. 7. 1. 행정구역 개편 반영) & 지도 링크
     // ========================================================================
 
-    /**
-     * Nominatim 역순 영미식 주소를 한국식(상위 -> 하위)으로 정리하고
-     * 2026년 7월 1일 출범 행정구역(영종구·제물포구·검단구·서해구, 전남광주통합특별시)을 적용합니다.
-     */
     function formatKoreanAddress(rawDisplayName, placeTitle) {
         if (!rawDisplayName) return '';
         const rules = activePresets.addressRules || FALLBACK_PRESETS.addressRules;
@@ -377,11 +339,8 @@
         const gdKeywords = rules.incheonGeomdanKeywords || [];
 
         let parts = String(rawDisplayName).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-        // 우편번호 제거
         parts = parts.filter(function (p) { return !/^\d{3}-?\d{3,4}$/.test(p) && !/^\d{5,6}$/.test(p); });
-        // 국가명 제거
         parts = parts.filter(function (p) { return stripCountries.indexOf(p) === -1; });
-        // 첫 토큰이 장소명과 중복이면 제거
         if (parts.length > 1 && placeTitle && parts[0].toLowerCase() === String(placeTitle).trim().toLowerCase()) {
             parts.shift();
         }
@@ -417,7 +376,6 @@
             if (unique.indexOf(normalized) === -1) unique.push(normalized);
         });
 
-        // 도로명 주소(대로/로/길)가 포함되어 있으면 불필요한 법정동(동/읍/면/리/가) 생략
         const hasRoadName = unique.some(function (t) {
             return /(대로|로|길)$/.test(t) || /(대로|로|길)\d*번?길?$/.test(t);
         });
@@ -428,9 +386,6 @@
         return filtered.join(' ');
     }
 
-    /**
-     * 기존에 저장된 주소 문자열도 표시 시 2026. 7. 1. 최신 행정구역 명칭으로 보정합니다.
-     */
     function upgradeDisplayAddress(addrStr) {
         if (!addrStr) return '';
         let s = String(addrStr);
@@ -440,10 +395,6 @@
         return s;
     }
 
-    /**
-     * OpenStreetMap Nominatim API로 장소 주소를 검색합니다.
-     * 도시 힌트와 함께 우선 검색하고, 결과가 없으면 장소명만으로 2차 폴백 검색합니다.
-     */
     async function searchAddressNominatim(query, destHint) {
         const cleanQuery = String(query || '').trim();
         if (!cleanQuery) return [];
@@ -469,9 +420,6 @@
         }
     }
 
-    /**
-     * 단일 장소 구글 지도 검색 URL 생성
-     */
     function getSinglePlaceMapUrl(item, tripDestination) {
         if (!item) return '#';
         const query = item.address
@@ -480,9 +428,6 @@
         return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(query.trim());
     }
 
-    /**
-     * 특정 일차 전체 동선 구글 지도 길찾기 URL 생성
-     */
     function getDayRouteMapUrl(dayNum, tripObj) {
         const list = (tripObj && tripObj.itinerary && tripObj.itinerary[dayNum]) || [];
         if (list.length === 0) return '#';
@@ -503,9 +448,6 @@
             '&travelmode=transit';
     }
 
-    /**
-     * 인접한 두 일정 장소(A -> B) 간의 구글 지도 구간 길찾기 URL을 생성합니다.
-     */
     function getLegRouteMapUrl(fromItem, toItem, tripDestination) {
         if (!fromItem || !toItem) return '#';
         const buildQuery = function (item) {
@@ -522,12 +464,7 @@
     // ========================================================================
     // 4. 초대코드, 클립보드, 공유 요약문, 정렬, URL 검증, CSV 및 이미지 압축
     // ========================================================================
-    // 4. 초대코드, 클립보드, 공유 요약문 생성 유틸리티
-    // ========================================================================
 
-    /**
-     * 기존 여행들과 겹치지 않는 고유 초대코드('TRIP-XXXX')를 생성합니다.
-     */
     function generateUniqueShareCode(allTripsMap) {
         const existingCodes = new Set(
             Object.values(allTripsMap || {})
@@ -543,10 +480,6 @@
         return code;
     }
 
-    /**
-     * 텍스트를 클립보드에 복사합니다. (구글 사이트 iframe 폴백 포함)
-     * @returns {Promise<boolean>} 성공 여부
-     */
     async function copyToClipboard(text) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
             try {
@@ -571,9 +504,6 @@
         }
     }
 
-    /**
-     * 카카오톡 공유용 깔끔한 일정 & 가계부(중간 정산 반영) 요약 텍스트를 생성합니다.
-     */
     function generateCleanShareSummary(tripObj, budgetSummary) {
         if (!tripObj) return '';
         const categoryMeta = activePresets.categoryMeta || FALLBACK_PRESETS.categoryMeta;
@@ -621,10 +551,6 @@
         return text;
     }
 
-    /**
-     * 예약 확인서·바우처·구글 드라이브 등 외부 참고 링크를 안전하게 정규화합니다.
-     * (javascript:/data: 등 위험 프로토콜 차단, http(s) 누락 시 자동 보완)
-     */
     function normalizeExternalUrl(rawUrl) {
         const trimmed = String(rawUrl || '').trim();
         if (!trimmed) return '';
@@ -633,10 +559,6 @@
         return 'https://' + trimmed;
     }
 
-    /**
-     * 일차별 일정 목록을 방문 시각(HH:MM) 오름차순으로 안정 정렬합니다.
-     * 시각이 비어 있는 일정은 기존 순서를 유지한 채 맨 아래에 배치합니다.
-     */
     function sortItineraryItems(items) {
         if (!Array.isArray(items)) return [];
         return items
@@ -655,10 +577,6 @@
             .map(function (entry) { return entry.item; });
     }
 
-    /**
-     * 가계부 지출 내역 및 정산 요약을 한글 깨짐 없는 UTF-8 BOM CSV(엑셀) 파일로 내려받습니다.
-     * @returns {boolean} 다운로드 성공 여부
-     */
     function exportExpensesToCSV(tripObj, budgetSummary) {
         if (!tripObj) return false;
         try {
@@ -770,11 +688,6 @@
         }
     }
 
-    /**
-     * 영수증 등 이미지 파일을 브라우저에서 초경량 JPEG Data URL(약 50~100KB)로 압축합니다.
-     * 영수증 특성상 세로로 긴 이미지도 글자가 깨지지 않도록 최대 폭 900px, 최대 높이 1600px을 유지합니다.
-     * @returns {Promise<{ dataUrl: string, sizeKB: number, width: number, height: number }>}
-     */
     function compressImageToDataUrl(file, maxWidth, quality) {
         return new Promise(function (resolve, reject) {
             if (!file) {
@@ -812,13 +725,11 @@
                         canvas.width = w;
                         canvas.height = h;
                         const ctx = canvas.getContext('2d');
-                        // 투명 PNG 배경을 흰색으로 채워 영수증 가독성 유지
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, w, h);
                         ctx.drawImage(img, 0, 0, w, h);
 
                         let dataUrl = canvas.toDataURL('image/jpeg', targetQuality);
-                        // 압축 후에도 320KB를 넘으면 한 번 더 경량화
                         if (dataUrl.length > 440000) {
                             dataUrl = canvas.toDataURL('image/jpeg', 0.52);
                         }
